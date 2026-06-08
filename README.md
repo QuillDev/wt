@@ -30,6 +30,7 @@ Example:
 ## Commands
 
 ```sh
+wt init
 wt new [--base REF] [--no-fetch] NAME
 wt list [--all]
 wt open [NAME|PATH]

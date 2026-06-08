@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { cancel, confirm, intro, isCancel, outro, select, spinner } from "@clack/prompts";
+import { cancel, confirm, intro, isCancel, outro, select, spinner, text } from "@clack/prompts";
 import pc from "picocolors";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 
 type ActionConfig = Record<string, { command?: string }>;
 
@@ -38,6 +38,7 @@ type HelpRow = {
 };
 
 const helpRows: HelpRow[] = [
+  { command: "init", description: "Create local worktree action config" },
   { command: "new", args: "[--base REF] [--no-fetch] NAME", description: "Create a managed worktree" },
   { command: "list", args: "[--all]", description: "Show managed worktrees" },
   { command: "open", args: "[NAME|PATH]", description: "Open a worktree in Cursor" },
@@ -74,6 +75,7 @@ function usage(): string {
     `  ${muted("actions")}    ${actionPath}`,
     "",
     helpSection("Examples"),
+    `  ${muted("$")} wt ${pink("init")}`,
     `  ${muted("$")} wt ${pink("new")} ${muted("--base origin/main")} nako-haru-7188`,
     `  ${muted("$")} wt ${pink("run")} ${muted("nako-haru-7188 dev")}`,
     `  ${muted("$")} wt ${pink("archive")} ${muted("--force nako-haru-7188")}`,
@@ -360,6 +362,71 @@ function fetchRemotes(cwd = process.cwd()): void {
   fail(stderr || "git fetch failed");
 }
 
+function requiredText(value: string | undefined): string | undefined {
+  if (!value?.trim()) return "Enter a command";
+  return undefined;
+}
+
+async function promptCommand(message: string, placeholder: string, initialValue?: string): Promise<string> {
+  const value = await text({
+    message,
+    placeholder,
+    initialValue,
+    validate: requiredText,
+  });
+
+  if (isCancel(value)) {
+    cancel("cancelled");
+    process.exit(1);
+  }
+
+  return value.trim();
+}
+
+async function cmdInit(args: string[]): Promise<void> {
+  requireGitRepo();
+
+  if (args.length > 0) {
+    if (args.length === 1 && (args[0] === "-h" || args[0] === "--help")) {
+      console.log(usage());
+      return;
+    }
+    fail(`unknown option for init: ${args[0]}`);
+  }
+
+  const root = baseRepoRoot();
+  const wtDir = join(root, ".wt");
+  const ignoreFile = join(wtDir, ".gitignore");
+  const actionsFile = join(wtDir, "actions.json");
+  let existing: ActionConfig = {};
+  if (existsSync(actionsFile)) {
+    try {
+      existing = readActions(root);
+    } catch {
+      existing = {};
+    }
+  }
+
+  intro("wt init");
+
+  const initCommand = await promptCommand(
+    "Init command",
+    "bun install --frozen-lockfile && bun run migrate-ledgers",
+    existing.init?.command,
+  );
+  const runCommand = await promptCommand("Run command", "bun run start:dev-fastest", existing.run?.command);
+  const actions: ActionConfig = {
+    init: { command: initCommand },
+    run: { command: runCommand },
+  };
+
+  mkdirSync(wtDir, { recursive: true });
+  if (!existsSync(ignoreFile)) writeFileSync(ignoreFile, "*\n");
+  writeFileSync(actionsFile, `${JSON.stringify(actions, null, 2)}\n`);
+
+  outro(`${pc.green("created")} ${relative(root, actionsFile)} ${pc.dim(`in ${root}`)}`);
+}
+
 async function cmdNew(args: string[]): Promise<void> {
   requireGitRepo();
   let base = "";
@@ -532,6 +599,9 @@ async function main(): Promise<void> {
   }
 
   switch (cmd) {
+    case "init":
+      await cmdInit(args);
+      break;
     case "new":
       await cmdNew(args);
       break;
