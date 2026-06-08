@@ -45,15 +45,25 @@ wt archive [--force] NAME|PATH
 
 ### Homebrew
 
-Anyone can install `wt` from this public repository with Homebrew:
+Anyone can install `wt` from this public repository with Homebrew and enable the `wt goto` shell integration for zsh:
 
 ```sh
 brew tap QuillDev/wt https://github.com/QuillDev/wt.git
 brew trust QuillDev/wt
 brew install QuillDev/wt/wt
+echo 'eval "$(wt shell-init)"' >> ~/.zshrc
+eval "$(wt shell-init)"
 ```
 
 The formula installs the tagged stable release and builds a standalone `wt` binary. Bun is used during the Homebrew build, but users do not need Bun to run `wt` after installation.
+
+Confirm the shell integration is active:
+
+```sh
+type wt
+```
+
+The output should say `wt is a function`. This is required for `wt goto` to change your current directory instead of only printing the target path.
 
 `brew trust QuillDev/wt` is required on newer Homebrew versions because this repository is used as a custom tap remote.
 

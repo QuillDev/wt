@@ -22,6 +22,16 @@ Install the stable release:
 brew install QuillDev/wt/wt
 ```
 
+Enable `wt goto` for zsh:
+
+```sh
+echo 'eval "$(wt shell-init)"' >> ~/.zshrc
+eval "$(wt shell-init)"
+type wt
+```
+
+`type wt` should say `wt is a function`. Without the shell integration, `wt goto` can only print the target directory because executables cannot change their parent shell's current directory.
+
 Install the latest `master` build:
 
 ```sh
