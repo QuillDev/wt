@@ -84,7 +84,11 @@ const helpRows: HelpRow[] = [
   { command: 'open', args: '[NAME|PATH]', description: 'Open a worktree in Cursor' },
   { command: 'run', args: 'ACTION', description: 'Run an action in the current repo' },
   { command: 'run', args: 'NAME|PATH ACTION', description: 'Run an action in another worktree' },
-  { command: 'archive', args: '[--force] NAME|PATH', description: 'Remove a managed worktree' },
+  {
+    command: 'archive',
+    args: '[--force] NAME|PATH',
+    description: 'Remove a managed worktree; --force skips confirmation',
+  },
 ];
 
 const commandAliases: Record<string, string> = {
@@ -133,7 +137,7 @@ function usage(): string {
     `  ${muted('$')} eval ${muted('"$(wt shell-init)"')}`,
     `  ${muted('$')} wt ${pink('goto')} ${muted('root')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
-    `  ${muted('$')} wt ${pink('archive')} ${muted('--force nako-haru-7188')}`,
+    `  ${muted('$')} wt ${pink('archive')} ${muted('nako-haru-7188')}`,
   ].join('\n');
 }
 
@@ -1189,8 +1193,7 @@ async function cmdArchive(args: string[]): Promise<void> {
     }
   }
 
-  const argsForGit = force ? ['worktree', 'remove', '--force', path] : ['worktree', 'remove', path];
-  git(argsForGit, path, { inherit: true });
+  git(['worktree', 'remove', '--force', path], path, { inherit: true });
   console.log(`${pc.green('archived')} ${path}`);
 }
 

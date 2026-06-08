@@ -41,6 +41,8 @@ wt run NAME|PATH ACTION
 wt archive [--force] NAME|PATH
 ```
 
+`wt archive` removes the worktree with `git worktree remove --force`, so modified or untracked files inside a managed worktree do not block cleanup. The `--force` flag only skips the confirmation prompt.
+
 ## Install
 
 ### Homebrew
