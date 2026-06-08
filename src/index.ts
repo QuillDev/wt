@@ -247,6 +247,20 @@ function actionNames(path: string): string[] {
     .sort();
 }
 
+function ellipsis(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  if (maxLength <= 3) return ".".repeat(maxLength);
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
+function actionHint(label: string, command?: string): string | undefined {
+  if (!command) return undefined;
+
+  const columns = process.stdout.columns || 80;
+  const maxLength = Math.max(12, Math.min(34, columns - label.length - 13));
+  return ellipsis(command.replace(/\s+/g, " ").trim(), maxLength);
+}
+
 async function runAction(path: string, action: string): Promise<void> {
   const file = actionsFileForPath(path);
   const actions = readActions(path);
@@ -299,9 +313,10 @@ async function chooseAction(path: string): Promise<string> {
   const names = actionNames(path);
   if (names.length === 0) fail(`no actions found for ${path}`);
 
+  const actions = readActions(path);
   const selected = await select({
     message: "Choose an action",
-    options: names.map((name) => ({ value: name, label: name, hint: readActions(path)[name]?.command })),
+    options: names.map((name) => ({ value: name, label: name, hint: actionHint(name, actions[name]?.command) })),
   });
   if (isCancel(selected)) {
     cancel("cancelled");
