@@ -73,6 +73,7 @@ const helpRows: HelpRow[] = [
     description: 'Create a managed worktree',
   },
   { command: 'list', args: '[--all]', description: 'Show managed worktrees' },
+  { command: 'goto', args: '[NAME|PATH]', description: 'Print a worktree directory for cd' },
   { command: 'open', args: '[NAME|PATH]', description: 'Open a worktree in Cursor' },
   { command: 'run', args: 'ACTION', description: 'Run an action in the current repo' },
   { command: 'run', args: 'NAME|PATH ACTION', description: 'Run an action in another worktree' },
@@ -113,6 +114,7 @@ function usage(): string {
     helpSection('Examples'),
     `  ${muted('$')} wt ${pink('init')}`,
     `  ${muted('$')} wt ${pink('new')} ${muted('--base origin/main')} nako-haru-7188`,
+    `  ${muted('$')} wt ${pink('goto')} ${muted('nako-haru-7188')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
     `  ${muted('$')} wt ${pink('archive')} ${muted('--force nako-haru-7188')}`,
   ].join('\n');
@@ -822,21 +824,30 @@ function cmdList(args: string[]): void {
   const scope = !all && isGitRepo() ? projectName() : undefined;
   const paths = walkManagedWorktrees(scope);
 
-  console.log(pc.bold('Worktrees'));
+  console.log(helpSection('Worktrees'));
   if (paths.length === 0) {
-    console.log(pc.dim('No managed worktrees found.'));
+    console.log(`  ${muted('No managed worktrees found.')}`);
     return;
   }
 
   for (const path of paths) {
     const rel = relative(wtWorktreesDir, path);
-    const [project, ...nameParts] = rel.split('/');
+    const [project = 'unknown', ...nameParts] = rel.split('/');
     const name = nameParts.join('/');
-    console.log(
-      `${pc.cyan('◆')} ${pc.bold(project)} ${pc.green(name)} ${pc.dim(worktreeBranch(path))}`,
-    );
-    console.log(`  ${pc.dim(path)}`);
+    console.log(`  ${pink('◆')} ${bold(project)} ${pink(name)} ${muted(worktreeBranch(path))}`);
+    console.log(`    ${muted(path)}`);
   }
+}
+
+async function cmdGoto(args: string[]): Promise<void> {
+  if (args.length > 1) {
+    fail('goto accepts at most one NAME or PATH');
+  }
+  const path =
+    args[0] === undefined
+      ? await chooseWorktree('Go to which worktree?')
+      : resolveWorktree(args[0]);
+  console.log(path);
 }
 
 async function cmdOpen(args: string[]): Promise<void> {
@@ -978,6 +989,10 @@ async function main(): Promise<void> {
     }
     case 'open': {
       await cmdOpen(args);
+      break;
+    }
+    case 'goto': {
+      await cmdGoto(args);
       break;
     }
     case 'run': {

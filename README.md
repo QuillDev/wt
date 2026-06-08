@@ -33,6 +33,7 @@ Example:
 wt init
 wt new [--base REF] [--no-fetch] NAME
 wt list [--all]
+wt goto [NAME|PATH]
 wt open [NAME|PATH]
 wt run ACTION
 wt run NAME|PATH ACTION
@@ -64,4 +65,21 @@ See [docs/homebrew.md](docs/homebrew.md) for release and tap setup.
 ```sh
 bun install
 bun run install-local
+```
+
+## Shell goto
+
+`wt goto [NAME|PATH]` prints the directory for a managed worktree. To make it change your current shell directory, add this wrapper to your shell config:
+
+```sh
+wt() {
+  if [ "$1" = "goto" ]; then
+    shift
+    local dir
+    dir="$(command wt goto "$@")" || return
+    cd "$dir" || return
+  else
+    command wt "$@"
+  fi
+}
 ```
