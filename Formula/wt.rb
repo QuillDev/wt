@@ -1,8 +1,8 @@
 class Wt < Formula
   desc "Small Bun CLI for managing Git worktrees"
   homepage "https://github.com/QuillDev/wt"
-  url "https://github.com/QuillDev/wt/archive/refs/tags/v0.1.3.tar.gz"
-  sha256 "7629c79447d2c6b31641525c286c51df57c79e7ffde20dacfbc65c96f1692e88"
+  url "https://github.com/QuillDev/wt/archive/refs/tags/v0.1.4.tar.gz"
+  sha256 "cc44f48714d2ce92b1c527d18f02982e78cb27be09b2876cbb653eeef564a286"
   license :cannot_represent
   head "https://github.com/QuillDev/wt.git", branch: "master"
 
