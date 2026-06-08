@@ -12,20 +12,56 @@ const wtWorktreesDir = process.env.WT_WORKTREES_DIR ?? join(wtHome, "worktrees")
 
 class WtError extends Error {}
 
+const pink = pc.magentaBright;
+const muted = pc.gray;
+
+type HelpRow = {
+  command: string;
+  args?: string;
+  description: string;
+};
+
+const helpRows: HelpRow[] = [
+  { command: "new", args: "[--base REF] [--no-fetch] NAME", description: "Create a managed worktree" },
+  { command: "list", args: "[--all]", description: "Show managed worktrees" },
+  { command: "open", args: "[NAME|PATH]", description: "Open a worktree in Cursor" },
+  { command: "run", args: "ACTION", description: "Run an action in the current repo" },
+  { command: "run", args: "NAME|PATH ACTION", description: "Run an action in another worktree" },
+  { command: "archive", args: "[--force] NAME|PATH", description: "Remove a managed worktree" },
+];
+
+function helpLine({ command, args, description }: HelpRow, width: number): string {
+  const plain = `wt ${command}${args ? ` ${args}` : ""}`;
+  const styled = `${muted("wt")} ${pink(command)}${args ? ` ${muted(args)}` : ""}`;
+  return `  ${styled}${" ".repeat(width - plain.length)}  ${description}`;
+}
+
+function helpSection(label: string): string {
+  return pink(label.toUpperCase());
+}
+
 function usage(): string {
-  return `Usage:
-  wt new [--base REF] [--no-fetch] NAME
-  wt list [--all]
-  wt open [NAME|PATH]
-  wt run ACTION
-  wt run NAME|PATH ACTION
-  wt archive [--force] NAME|PATH
+  const commandWidth = Math.max(...helpRows.map(({ command, args }) => `wt ${command}${args ? ` ${args}` : ""}`.length));
+  const title = `${pc.bgMagenta(pc.black(" wt "))} ${pc.bold("Git worktrees, kept close")}`;
+  const actionPath = `${muted("<base-repo>")}/${pink(".wt/actions.json")}`;
 
-Worktrees are stored at:
-  ~/.wt/worktrees/<project-name>/<worktree-name>
-
-Project actions are read from:
-  <base-repo>/.wt/actions.json`;
+  return [
+    "",
+    title,
+    muted("Small Bun CLI for making, opening, and running Git worktrees."),
+    "",
+    helpSection("Commands"),
+    ...helpRows.map((row) => helpLine(row, commandWidth)),
+    "",
+    helpSection("Storage"),
+    `  ${muted("worktrees")}  ${pink("~/.wt/worktrees")}/${muted("<project-name>/<worktree-name>")}`,
+    `  ${muted("actions")}    ${actionPath}`,
+    "",
+    helpSection("Examples"),
+    `  ${muted("$")} wt ${pink("new")} ${muted("--base origin/main")} nako-haru-7188`,
+    `  ${muted("$")} wt ${pink("run")} ${muted("nako-haru-7188 dev")}`,
+    `  ${muted("$")} wt ${pink("archive")} ${muted("--force nako-haru-7188")}`,
+  ].join("\n");
 }
 
 function fail(message: string): never {
