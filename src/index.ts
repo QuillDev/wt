@@ -20,6 +20,12 @@ interface InitCommands {
   runCommand: string;
 }
 
+interface PromptOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
 const home = process.env['HOME'] ?? '';
 const wtHome = process.env['WT_HOME'] ?? join(home, '.wt');
 const wtWorktreesDir = process.env['WT_WORKTREES_DIR'] ?? join(wtHome, 'worktrees');
@@ -73,12 +79,22 @@ const helpRows: HelpRow[] = [
     description: 'Create a managed worktree',
   },
   { command: 'list', args: '[--all]', description: 'Show managed worktrees' },
-  { command: 'goto', args: '[NAME|PATH]', description: 'Print a worktree directory for cd' },
+  { command: 'goto', args: '[root|NAME|PATH]', description: 'Print a directory for cd' },
+  { command: 'shell-init', description: 'Print shell integration for goto' },
   { command: 'open', args: '[NAME|PATH]', description: 'Open a worktree in Cursor' },
   { command: 'run', args: 'ACTION', description: 'Run an action in the current repo' },
   { command: 'run', args: 'NAME|PATH ACTION', description: 'Run an action in another worktree' },
   { command: 'archive', args: '[--force] NAME|PATH', description: 'Remove a managed worktree' },
 ];
+
+const commandAliases: Record<string, string> = {
+  '--help': 'help',
+  '-h': 'help',
+  delete: 'archive',
+  ls: 'list',
+  remove: 'archive',
+  rm: 'archive',
+};
 
 function helpLine({ command, args, description }: HelpRow, width: number): string {
   const plain = `wt ${command}${args === undefined ? '' : ` ${args}`}`;
@@ -114,7 +130,8 @@ function usage(): string {
     helpSection('Examples'),
     `  ${muted('$')} wt ${pink('init')}`,
     `  ${muted('$')} wt ${pink('new')} ${muted('--base origin/main')} nako-haru-7188`,
-    `  ${muted('$')} wt ${pink('goto')} ${muted('nako-haru-7188')}`,
+    `  ${muted('$')} eval ${muted('"$(wt shell-init)"')}`,
+    `  ${muted('$')} wt ${pink('goto')} ${muted('root')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
     `  ${muted('$')} wt ${pink('archive')} ${muted('--force nako-haru-7188')}`,
   ].join('\n');
@@ -430,18 +447,39 @@ async function chooseWorktree(prompt: string, scopeCurrentProject = true): Promi
     fail('no managed worktrees found');
   }
 
-  const selected = await select({
-    message: prompt,
-    options: paths.map((path) => ({
+  const selected = await promptSelect(
+    prompt,
+    paths.map((path) => ({
       value: path,
       label: scope === undefined ? relative(wtWorktreesDir, path) : worktreeName(path, scope),
       hint: worktreeBranch(path),
     })),
-  });
-  if (isCancel(selected)) {
-    cancel('cancelled');
-    process.exit(1);
+  );
+  return selected;
+}
+
+async function chooseGotoPath(): Promise<string> {
+  const options: PromptOption[] = [];
+  let scope: string | undefined;
+  if (isGitRepo()) {
+    scope = projectName();
+    const root = baseRepoRoot();
+    options.push({ value: root, label: 'root', hint: root });
   }
+
+  options.push(
+    ...walkManagedWorktrees(scope).map((path) => ({
+      value: path,
+      label: scope === undefined ? relative(wtWorktreesDir, path) : worktreeName(path, scope),
+      hint: worktreeBranch(path),
+    })),
+  );
+
+  if (options.length === 0) {
+    fail('no repository root or managed worktrees found');
+  }
+
+  const selected = await promptSelect('Go to which directory?', options);
   return selected;
 }
 
@@ -452,18 +490,190 @@ async function chooseAction(path: string): Promise<string> {
   }
 
   const actions = readActions(path);
-  const selected = await select({
-    message: 'Choose an action',
-    options: names.map((name) => {
+  const selected = await promptSelect(
+    'Choose an action',
+    names.map((name) => {
       const hint = actionHint(name, actions[name]?.command);
       return hint === undefined ? { value: name, label: name } : { value: name, label: name, hint };
     }),
+  );
+  return selected;
+}
+
+async function promptSelectFallback(message: string, options: PromptOption[]): Promise<string> {
+  const selected = await select({
+    message,
+    options,
   });
   if (isCancel(selected)) {
     cancel('cancelled');
     process.exit(1);
   }
   return selected;
+}
+
+async function promptSelectOpenTui(message: string, options: PromptOption[]): Promise<string> {
+  const {
+    BoxRenderable,
+    SelectRenderable,
+    SelectRenderableEvents,
+    TextRenderable,
+    createCliRenderer,
+  } = await import('@opentui/core');
+
+  const renderer = await createCliRenderer({
+    screenMode: 'main-screen',
+    consoleMode: 'disabled',
+    exitOnCtrlC: false,
+    useMouse: false,
+    useKittyKeyboard: null,
+    clearOnShutdown: true,
+    backgroundColor: darkPanel,
+  });
+
+  const visibleItems = Math.min(Math.max(options.length, 1), 8);
+  const width = Math.min(Math.max(56, renderer.width - 4), 92);
+  const height = Math.min(renderer.height - 2, Math.max(8, visibleItems * 2 + 5));
+  const panel = new BoxRenderable(renderer, {
+    id: 'wt-select-form',
+    width,
+    height,
+    border: true,
+    borderStyle: 'rounded',
+    borderColor: pinkHex,
+    title: ` ${message} `,
+    titleColor: pinkHex,
+    bottomTitle: ' Enter selects · Esc cancels ',
+    backgroundColor: darkPanel,
+    padding: 1,
+    flexDirection: 'column',
+    gap: 1,
+  });
+
+  const help = new TextRenderable(renderer, {
+    id: 'help',
+    content: 'Use ↑/↓ to move. Press Enter to select.',
+    fg: mutedText,
+    height: 1,
+    truncate: true,
+  });
+  const list = new SelectRenderable(renderer, {
+    id: 'select',
+    width: '100%',
+    height: Math.max(3, height - 5),
+    options: options.map((option) => ({
+      name: option.label,
+      description: option.hint ?? '',
+      value: option.value,
+    })),
+    backgroundColor: darkPanel,
+    focusedBackgroundColor: darkPanel,
+    textColor: lightText,
+    focusedTextColor: lightText,
+    selectedBackgroundColor: darkInputFocused,
+    selectedTextColor: pinkHex,
+    descriptionColor: mutedText,
+    selectedDescriptionColor: lightText,
+    showDescription: true,
+    showScrollIndicator: true,
+    wrapSelection: true,
+  });
+
+  panel.add(help);
+  panel.add(list);
+  renderer.root.add(panel);
+
+  return new Promise<string>((resolve, reject) => {
+    let done = false;
+
+    const cleanup = () => {
+      renderer.keyInput.off('keypress', onKeypress);
+      renderer.destroy();
+    };
+
+    const finish = () => {
+      const option = list.getSelectedOption();
+      const value: unknown = option?.value;
+      if (typeof value !== 'string') {
+        return;
+      }
+
+      done = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const onKeypress = (key: KeyEvent) => {
+      if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+        done = true;
+        cleanup();
+        reject(new WtError('cancelled'));
+      }
+    };
+
+    list.on(SelectRenderableEvents.ITEM_SELECTED, finish);
+    renderer.keyInput.on('keypress', onKeypress);
+
+    list.focus();
+    renderer.start();
+    renderer.requestRender();
+
+    renderer.on('destroy', () => {
+      if (!done) {
+        reject(new WtError('cancelled'));
+      }
+    });
+  });
+}
+
+async function promptSelect(message: string, options: PromptOption[]): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return promptSelectFallback(message, options);
+  }
+
+  try {
+    return await promptSelectOpenTui(message, options);
+  } catch (error) {
+    if (error instanceof WtError) {
+      throw error;
+    }
+    return promptSelectFallback(message, options);
+  }
+}
+
+async function promptConfirmOpenTui(message: string): Promise<boolean> {
+  const selected = await promptSelect(message, [
+    { value: 'no', label: 'No', hint: 'Cancel' },
+    { value: 'yes', label: 'Yes', hint: 'Continue' },
+  ]);
+  return selected === 'yes';
+}
+
+async function promptConfirmFallback(message: string): Promise<boolean> {
+  const ok = await confirm({
+    message,
+    initialValue: false,
+  });
+  if (isCancel(ok)) {
+    cancel('cancelled');
+    process.exit(1);
+  }
+  return ok;
+}
+
+async function promptConfirm(message: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return promptConfirmFallback(message);
+  }
+
+  try {
+    return await promptConfirmOpenTui(message);
+  } catch (error) {
+    if (error instanceof WtError) {
+      throw error;
+    }
+    return promptConfirmFallback(message);
+  }
 }
 
 function fetchRemotes(cwd = process.cwd()): void {
@@ -843,11 +1053,52 @@ async function cmdGoto(args: string[]): Promise<void> {
   if (args.length > 1) {
     fail('goto accepts at most one NAME or PATH');
   }
-  const path =
-    args[0] === undefined
-      ? await chooseWorktree('Go to which worktree?')
-      : resolveWorktree(args[0]);
+  let path: string;
+  if (args[0] === undefined) {
+    path = await chooseGotoPath();
+  } else if (args[0] === 'root') {
+    requireGitRepo();
+    path = baseRepoRoot();
+  } else {
+    path = resolveWorktree(args[0]);
+  }
+  const outputFile = process.env['WT_GOTO_OUTPUT'];
+  if (outputFile !== undefined && outputFile !== '') {
+    writeFileSync(outputFile, `${path}\n`);
+    return;
+  }
   console.log(path);
+}
+
+function cmdShellInit(args: string[]): void {
+  if (args.length > 0) {
+    fail(`unknown option for shell-init: ${args[0]}`);
+  }
+
+  const wtBin = shellQuote(process.argv[1] ?? 'wt');
+  console.log(`_wt_bin=${wtBin}
+wt() {
+  if [ "$1" = "goto" ]; then
+    shift
+    local tmp
+    local dir
+    tmp="$(mktemp)" || return
+    env WT_GOTO_OUTPUT="$tmp" "$_wt_bin" goto "$@" || {
+      rm -f "$tmp"
+      return
+    }
+    dir="$(cat "$tmp")"
+    rm -f "$tmp"
+    [ -n "$dir" ] || return
+    cd "$dir" || return
+  else
+    "$_wt_bin" "$@"
+  fi
+}`);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 async function cmdOpen(args: string[]): Promise<void> {
@@ -912,11 +1163,8 @@ async function cmdArchive(args: string[]): Promise<void> {
   const path =
     target === '' ? await chooseWorktree('Archive which worktree?') : resolveWorktree(target);
   if (!force) {
-    const ok = await confirm({
-      message: `Archive ${worktreeName(path, projectName(path))}?`,
-      initialValue: false,
-    });
-    if (isCancel(ok) || !ok) {
+    const ok = await promptConfirm(`Archive ${worktreeName(path, projectName(path))}?`);
+    if (!ok) {
       cancel('cancelled');
       process.exit(1);
     }
@@ -972,8 +1220,9 @@ async function main(): Promise<void> {
     console.log(usage());
     return;
   }
+  const normalizedCmd = commandAliases[cmd] ?? cmd;
 
-  switch (cmd) {
+  switch (normalizedCmd) {
     case 'init': {
       await cmdInit(args);
       break;
@@ -982,8 +1231,7 @@ async function main(): Promise<void> {
       cmdNew(args);
       break;
     }
-    case 'list':
-    case 'ls': {
+    case 'list': {
       cmdList(args);
       break;
     }
@@ -995,14 +1243,15 @@ async function main(): Promise<void> {
       await cmdGoto(args);
       break;
     }
+    case 'shell-init': {
+      cmdShellInit(args);
+      break;
+    }
     case 'run': {
       await cmdRun(args);
       break;
     }
-    case 'archive':
-    case 'rm':
-    case 'remove':
-    case 'delete': {
+    case 'archive': {
       await cmdArchive(args);
       break;
     }
@@ -1018,8 +1267,6 @@ async function main(): Promise<void> {
       completeActions(args[0]);
       break;
     }
-    case '-h':
-    case '--help':
     case 'help': {
       console.log(usage());
       break;

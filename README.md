@@ -33,7 +33,8 @@ Example:
 wt init
 wt new [--base REF] [--no-fetch] NAME
 wt list [--all]
-wt goto [NAME|PATH]
+wt goto [root|NAME|PATH]
+wt shell-init
 wt open [NAME|PATH]
 wt run ACTION
 wt run NAME|PATH ACTION
@@ -69,17 +70,40 @@ bun run install-local
 
 ## Shell goto
 
-`wt goto [NAME|PATH]` prints the directory for a managed worktree. To make it change your current shell directory, add this wrapper to your shell config:
+An executable cannot directly change the current directory of its parent shell. `wt goto [root|NAME|PATH]` prints the target directory by itself; enable the shell integration to make it run `cd`.
+
+For the current shell:
 
 ```sh
+eval "$(wt shell-init)"
+```
+
+To enable it permanently in zsh:
+
+```sh
+echo 'eval "$(wt shell-init)"' >> ~/.zshrc
+```
+
+The generated shell function is:
+
+```sh
+_wt_bin='/opt/homebrew/bin/wt'
 wt() {
   if [ "$1" = "goto" ]; then
     shift
+    local tmp
     local dir
-    dir="$(command wt goto "$@")" || return
+    tmp="$(mktemp)" || return
+    env WT_GOTO_OUTPUT="$tmp" "$_wt_bin" goto "$@" || {
+      rm -f "$tmp"
+      return
+    }
+    dir="$(cat "$tmp")"
+    rm -f "$tmp"
+    [ -n "$dir" ] || return
     cd "$dir" || return
   else
-    command wt "$@"
+    "$_wt_bin" "$@"
   fi
 }
 ```
