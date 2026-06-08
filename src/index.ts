@@ -1075,7 +1075,7 @@ function cmdShellInit(args: string[]): void {
     fail(`unknown option for shell-init: ${args[0]}`);
   }
 
-  const wtBin = shellQuote(process.argv[1] ?? 'wt');
+  const wtBin = shellQuote(shellInitExecutablePath());
   console.log(`_wt_bin=${wtBin}
 wt() {
   if [ "$1" = "goto" ]; then
@@ -1099,6 +1099,14 @@ wt() {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function shellInitExecutablePath(): string {
+  const [, scriptPath] = process.argv;
+  if (scriptPath === undefined || scriptPath.startsWith('/$bunfs/')) {
+    return process.execPath;
+  }
+  return scriptPath;
 }
 
 async function cmdOpen(args: string[]): Promise<void> {
