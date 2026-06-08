@@ -12,8 +12,24 @@ const wtWorktreesDir = process.env.WT_WORKTREES_DIR ?? join(wtHome, "worktrees")
 
 class WtError extends Error {}
 
-const pink = pc.magentaBright;
-const muted = pc.gray;
+const colorEnabled =
+  !process.env.NO_COLOR &&
+  !process.argv.includes("--no-color") &&
+  (Boolean(process.env.FORCE_COLOR) ||
+    process.argv.includes("--color") ||
+    process.platform === "win32" ||
+    Boolean(process.stdout.isTTY && process.env.TERM !== "dumb") ||
+    Boolean(process.env.CI));
+
+const muted = (text: string): string => ansi(text, "\x1b[90m", "\x1b[39m");
+const black = (text: string): string => ansi(text, "\x1b[30m", "\x1b[39m");
+const bold = (text: string): string => ansi(text, "\x1b[1m", "\x1b[22m");
+const pink = (text: string): string => ansi(text, "\x1b[38;2;244;114;182m", "\x1b[39m");
+const pinkBg = (text: string): string => ansi(text, "\x1b[48;2;244;114;182m", "\x1b[49m");
+
+function ansi(text: string, open: string, close: string): string {
+  return colorEnabled ? `${open}${text}${close}` : text;
+}
 
 type HelpRow = {
   command: string;
@@ -42,7 +58,7 @@ function helpSection(label: string): string {
 
 function usage(): string {
   const commandWidth = Math.max(...helpRows.map(({ command, args }) => `wt ${command}${args ? ` ${args}` : ""}`.length));
-  const title = `${pc.bgMagenta(pc.black(" wt "))} ${pc.bold("Git worktrees, kept close")}`;
+  const title = `${pinkBg(black(" wt "))} ${bold("Git worktrees, kept close")}`;
   const actionPath = `${muted("<base-repo>")}/${pink(".wt/actions.json")}`;
 
   return [
