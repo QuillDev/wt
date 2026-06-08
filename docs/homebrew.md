@@ -47,14 +47,15 @@ If `which wt` still points at `~/.local/bin/wt`, that local symlink is shadowing
 3. Tag the release:
 
 ```sh
-git tag v0.1.4
-git push origin v0.1.4
+version=vX.Y.Z
+git tag "$version"
+git push origin "$version"
 ```
 
 4. Compute the source tarball checksum:
 
 ```sh
-curl -L https://github.com/QuillDev/wt/archive/refs/tags/v0.1.4.tar.gz | shasum -a 256
+curl -L "https://github.com/QuillDev/wt/archive/refs/tags/$version.tar.gz" | shasum -a 256
 ```
 
 5. Update `Formula/wt.rb` with the new tag URL and checksum.

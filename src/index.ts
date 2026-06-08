@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { randomBytes } from 'node:crypto';
 import {
   existsSync,
   lstatSync,
@@ -75,7 +76,7 @@ const helpRows: HelpRow[] = [
   { command: 'init', description: 'Create local worktree action config' },
   {
     command: 'new',
-    args: '[--base REF] [--no-fetch] NAME',
+    args: '[--base REF] [--no-fetch] [NAME]',
     description: 'Create a managed worktree',
   },
   { command: 'list', args: '[--all]', description: 'Show managed worktrees' },
@@ -133,7 +134,7 @@ function usage(): string {
     '',
     helpSection('Examples'),
     `  ${muted('$')} wt ${pink('init')}`,
-    `  ${muted('$')} wt ${pink('new')} ${muted('--base origin/main')} nako-haru-7188`,
+    `  ${muted('$')} wt ${pink('new')} ${muted('--base origin/main')}`,
     `  ${muted('$')} eval ${muted('"$(wt shell-init)"')}`,
     `  ${muted('$')} wt ${pink('goto')} ${muted('root')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
@@ -269,6 +270,21 @@ function validateWorktreeName(name: string): void {
   if (proc.exitCode !== 0) {
     fail(`invalid git branch name: ${name}`);
   }
+}
+
+function localBranchExists(name: string, cwd = process.cwd()): boolean {
+  return refExists(`refs/heads/${name}`, cwd);
+}
+
+function generatedWorktreeName(project: string): string {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const name = `wt/${randomBytes(2).toString('hex')}`;
+    if (!localBranchExists(name) && !existsSync(join(wtWorktreesDir, project, name))) {
+      return name;
+    }
+  }
+
+  return fail('could not generate an available worktree name');
 }
 
 function walkManagedWorktrees(scope?: string): string[] {
@@ -995,11 +1011,6 @@ function cmdNew(args: string[]): void {
     }
   }
 
-  if (name === '') {
-    fail('new requires NAME');
-  }
-  validateWorktreeName(name);
-
   if (doFetch) {
     fetchRemotes();
   }
@@ -1008,17 +1019,18 @@ function cmdNew(args: string[]): void {
   }
 
   const project = projectName();
+  if (name === '') {
+    name = generatedWorktreeName(project);
+  }
+  validateWorktreeName(name);
+
   const target = join(wtWorktreesDir, project, name);
   if (existsSync(target)) {
     fail(`target already exists: ${target}`);
   }
 
   mkdirSync(dirname(target), { recursive: true });
-  const branchExists =
-    Bun.spawnSync(['git', 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], {
-      stdout: 'ignore',
-      stderr: 'ignore',
-    }).exitCode === 0;
+  const branchExists = localBranchExists(name);
 
   intro(`wt new ${name}`);
   const gitArgs = branchExists

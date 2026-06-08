@@ -31,7 +31,7 @@ Example:
 
 ```sh
 wt init
-wt new [--base REF] [--no-fetch] NAME
+wt new [--base REF] [--no-fetch] [NAME]
 wt list [--all]
 wt goto [root|NAME|PATH]
 wt shell-init
@@ -42,6 +42,8 @@ wt archive [--force] NAME|PATH
 ```
 
 `wt archive` removes the worktree with `git worktree remove --force`, so modified or untracked files inside a managed worktree do not block cleanup. The `--force` flag only skips the confirmation prompt.
+
+When `NAME` is omitted, `wt new` generates an available branch and worktree name like `wt/3f9a`.
 
 ## Install
 
