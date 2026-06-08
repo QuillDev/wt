@@ -1068,6 +1068,17 @@ async function cmdGoto(args: string[]): Promise<void> {
     return;
   }
   console.log(path);
+  printGotoShellHint();
+}
+
+function printGotoShellHint(): void {
+  if (!process.stdout.isTTY || !process.stderr.isTTY) {
+    return;
+  }
+
+  console.error(
+    `${muted('tip')} run ${pink('eval "$(wt shell-init)"')} to make ${pink('wt goto')} change this shell directory`,
+  );
 }
 
 function cmdShellInit(args: string[]): void {

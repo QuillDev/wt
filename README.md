@@ -78,6 +78,14 @@ For the current shell:
 eval "$(wt shell-init)"
 ```
 
+Confirm it is active:
+
+```sh
+type wt
+```
+
+The output should say `wt is a function`. If it points at a file path, the shell integration is not loaded and `wt goto` will only print the target path.
+
 To enable it permanently in zsh:
 
 ```sh
