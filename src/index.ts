@@ -5,10 +5,22 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 
 type ActionConfig = Record<string, { command?: string }>;
+type InitCommands = {
+  initCommand: string;
+  runCommand: string;
+};
 
 const home = process.env.HOME ?? "";
 const wtHome = process.env.WT_HOME ?? join(home, ".wt");
 const wtWorktreesDir = process.env.WT_WORKTREES_DIR ?? join(wtHome, "worktrees");
+const defaultInitCommand = "bun install --frozen-lockfile && bun run migrate-ledgers";
+const defaultRunCommand = "bun run start:dev-fastest";
+const darkPanel = "#282C34";
+const darkInput = "#15161D";
+const darkInputFocused = "#3A2A36";
+const lightText = "#F3F4F6";
+const mutedText = "#9CA3AF";
+const pinkHex = "#F472B6";
 
 class WtError extends Error {}
 
@@ -383,6 +395,195 @@ async function promptCommand(message: string, placeholder: string, initialValue?
   return value.trim();
 }
 
+async function promptInitCommandsFallback(existing: ActionConfig): Promise<InitCommands> {
+  intro("wt init");
+  const initCommand = await promptCommand("Init command", defaultInitCommand, existing.init?.command);
+  const runCommand = await promptCommand("Run command", defaultRunCommand, existing.run?.command);
+  return { initCommand, runCommand };
+}
+
+async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCommands> {
+  const {
+    BoxRenderable,
+    InputRenderable,
+    InputRenderableEvents,
+    TextRenderable,
+    createCliRenderer,
+  } = await import("@opentui/core");
+
+  const renderer = await createCliRenderer({
+    screenMode: "main-screen",
+    consoleMode: "disabled",
+    exitOnCtrlC: false,
+    useMouse: false,
+    useKittyKeyboard: null,
+    clearOnShutdown: true,
+    backgroundColor: darkPanel,
+  });
+
+  const width = Math.min(Math.max(64, renderer.width - 4), 94);
+  const inputWidth = Math.max(32, width - 18);
+  const panel = new BoxRenderable(renderer, {
+    id: "wt-init-form",
+    width,
+    height: 11,
+    border: true,
+    borderStyle: "rounded",
+    borderColor: pinkHex,
+    title: " wt init ",
+    titleColor: pinkHex,
+    bottomTitle: " Esc cancels ",
+    backgroundColor: darkPanel,
+    padding: 1,
+    flexDirection: "column",
+    gap: 1,
+  });
+
+  const help = new TextRenderable(renderer, {
+    id: "help",
+    content: "Edit local worktree actions. Tab switches fields. Enter saves from Run.",
+    fg: mutedText,
+    height: 1,
+    truncate: true,
+  });
+  const error = new TextRenderable(renderer, {
+    id: "error",
+    content: "",
+    fg: "#FCA5A5",
+    height: 1,
+    truncate: true,
+  });
+
+  function labeledInput(id: string, label: string, value: string | undefined, placeholder: string) {
+    const row = new BoxRenderable(renderer, {
+      id: `${id}-row`,
+      width: "100%",
+      height: 1,
+      flexDirection: "row",
+      gap: 1,
+    });
+    row.add(
+      new TextRenderable(renderer, {
+        id: `${id}-label`,
+        content: label.padEnd(11),
+        fg: mutedText,
+        width: 12,
+        height: 1,
+      }),
+    );
+    const input = new InputRenderable(renderer, {
+      id,
+      width: inputWidth,
+      value: value ?? "",
+      placeholder,
+      minLength: 1,
+      maxLength: 500,
+      backgroundColor: darkInput,
+      focusedBackgroundColor: darkInputFocused,
+      textColor: lightText,
+      focusedTextColor: lightText,
+      placeholderColor: mutedText,
+      cursorColor: pinkHex,
+    });
+    row.add(input);
+    return { row, input };
+  }
+
+  const init = labeledInput("init-command", "Init", existing.init?.command, defaultInitCommand);
+  const run = labeledInput("run-command", "Run", existing.run?.command, defaultRunCommand);
+
+  panel.add(help);
+  panel.add(init.row);
+  panel.add(run.row);
+  panel.add(error);
+  renderer.root.add(panel);
+
+  const inputs = [init.input, run.input];
+  let focusIndex = 0;
+
+  const setFocus = (index: number) => {
+    inputs[focusIndex]?.blur();
+    focusIndex = index;
+    inputs[focusIndex]?.focus();
+    renderer.requestRender();
+  };
+
+  const setError = (message: string) => {
+    error.content = message;
+    renderer.requestRender();
+  };
+
+  return await new Promise<InitCommands>((resolve, reject) => {
+    let done = false;
+
+    const cleanup = () => {
+      renderer.keyInput.off("keypress", onKeypress);
+      renderer.destroy();
+    };
+
+    const finish = () => {
+      const initCommand = init.input.value.trim();
+      const runCommand = run.input.value.trim();
+      if (!initCommand) {
+        setError("Init command is required.");
+        setFocus(0);
+        return;
+      }
+      if (!runCommand) {
+        setError("Run command is required.");
+        setFocus(1);
+        return;
+      }
+
+      done = true;
+      cleanup();
+      resolve({ initCommand, runCommand });
+    };
+
+    const onKeypress = (key: import("@opentui/core").KeyEvent) => {
+      if (key.name === "tab") {
+        key.preventDefault();
+        setError("");
+        setFocus((focusIndex + 1) % inputs.length);
+        return;
+      }
+      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+        done = true;
+        cleanup();
+        reject(new WtError("cancelled"));
+      }
+    };
+
+    init.input.on(InputRenderableEvents.ENTER, () => {
+      setError("");
+      setFocus(1);
+    });
+    run.input.on(InputRenderableEvents.ENTER, finish);
+    renderer.keyInput.on("keypress", onKeypress);
+
+    setFocus(0);
+    renderer.start();
+    renderer.requestRender();
+
+    renderer.on("destroy", () => {
+      if (!done) reject(new WtError("cancelled"));
+    });
+  });
+}
+
+async function promptInitCommands(existing: ActionConfig): Promise<InitCommands> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return await promptInitCommandsFallback(existing);
+  }
+
+  try {
+    return await promptInitCommandsOpenTui(existing);
+  } catch (error) {
+    if (error instanceof WtError) throw error;
+    return await promptInitCommandsFallback(existing);
+  }
+}
+
 async function cmdInit(args: string[]): Promise<void> {
   requireGitRepo();
 
@@ -407,14 +608,7 @@ async function cmdInit(args: string[]): Promise<void> {
     }
   }
 
-  intro("wt init");
-
-  const initCommand = await promptCommand(
-    "Init command",
-    "bun install --frozen-lockfile && bun run migrate-ledgers",
-    existing.init?.command,
-  );
-  const runCommand = await promptCommand("Run command", "bun run start:dev-fastest", existing.run?.command);
+  const { initCommand, runCommand } = await promptInitCommands(existing);
   const actions: ActionConfig = {
     init: { command: initCommand },
     run: { command: runCommand },
@@ -424,7 +618,7 @@ async function cmdInit(args: string[]): Promise<void> {
   if (!existsSync(ignoreFile)) writeFileSync(ignoreFile, "*\n");
   writeFileSync(actionsFile, `${JSON.stringify(actions, null, 2)}\n`);
 
-  outro(`${pc.green("created")} ${relative(root, actionsFile)} ${pc.dim(`in ${root}`)}`);
+  console.log(`${pc.green("created")} ${relative(root, actionsFile)} ${pc.dim(`in ${root}`)}`);
 }
 
 async function cmdNew(args: string[]): Promise<void> {

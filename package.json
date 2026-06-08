@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.1",
+    "@opentui/core": "^0.3.4",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
