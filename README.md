@@ -43,11 +43,19 @@ wt archive [--force] NAME|PATH
 
 ### Homebrew
 
+Anyone can install `wt` from this public repository with Homebrew:
+
 ```sh
 brew tap QuillDev/wt https://github.com/QuillDev/wt.git
 brew trust QuillDev/wt
 brew install QuillDev/wt/wt
 ```
+
+The formula installs the tagged stable release and builds a standalone `wt` binary. Bun is used during the Homebrew build, but users do not need Bun to run `wt` after installation.
+
+`brew trust QuillDev/wt` is required on newer Homebrew versions because this repository is used as a custom tap remote.
+
+If `which wt` points somewhere other than Homebrew after installation, another local command is shadowing the Homebrew binary. The Homebrew binary is usually installed at `/opt/homebrew/bin/wt` on Apple Silicon macOS.
 
 See [docs/homebrew.md](docs/homebrew.md) for release and tap setup.
 
