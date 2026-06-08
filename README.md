@@ -41,6 +41,18 @@ wt archive [--force] NAME|PATH
 
 ## Install
 
+### Homebrew
+
+```sh
+brew tap QuillDev/wt https://github.com/QuillDev/wt.git
+brew trust QuillDev/wt
+brew install QuillDev/wt/wt
+```
+
+See [docs/homebrew.md](docs/homebrew.md) for release and tap setup.
+
+### Local checkout
+
 ```sh
 bun install
 bun run install-local
