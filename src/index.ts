@@ -1,68 +1,88 @@
 #!/usr/bin/env bun
-import { cancel, confirm, intro, isCancel, outro, select, spinner, text } from "@clack/prompts";
-import pc from "picocolors";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
+
+import { cancel, confirm, intro, isCancel, outro, select, spinner, text } from '@clack/prompts';
+import type { KeyEvent } from '@opentui/core';
+import pc from 'picocolors';
 
 type ActionConfig = Record<string, { command?: string }>;
-type InitCommands = {
+interface InitCommands {
   initCommand: string;
   runCommand: string;
-};
-
-const home = process.env.HOME ?? "";
-const wtHome = process.env.WT_HOME ?? join(home, ".wt");
-const wtWorktreesDir = process.env.WT_WORKTREES_DIR ?? join(wtHome, "worktrees");
-const defaultInitCommand = "bun install --frozen-lockfile && bun run migrate-ledgers";
-const defaultRunCommand = "bun run start:dev-fastest";
-const darkPanel = "#282C34";
-const darkInput = "#15161D";
-const darkInputFocused = "#3A2A36";
-const lightText = "#F3F4F6";
-const mutedText = "#9CA3AF";
-const pinkHex = "#F472B6";
-
-class WtError extends Error {}
-
-const colorEnabled =
-  !process.env.NO_COLOR &&
-  !process.argv.includes("--no-color") &&
-  (Boolean(process.env.FORCE_COLOR) ||
-    process.argv.includes("--color") ||
-    process.platform === "win32" ||
-    Boolean(process.stdout.isTTY && process.env.TERM !== "dumb") ||
-    Boolean(process.env.CI));
-
-const muted = (text: string): string => ansi(text, "\x1b[90m", "\x1b[39m");
-const black = (text: string): string => ansi(text, "\x1b[30m", "\x1b[39m");
-const bold = (text: string): string => ansi(text, "\x1b[1m", "\x1b[22m");
-const pink = (text: string): string => ansi(text, "\x1b[38;2;244;114;182m", "\x1b[39m");
-const pinkBg = (text: string): string => ansi(text, "\x1b[48;2;244;114;182m", "\x1b[49m");
-
-function ansi(text: string, open: string, close: string): string {
-  return colorEnabled ? `${open}${text}${close}` : text;
 }
 
-type HelpRow = {
+const home = process.env['HOME'] ?? '';
+const wtHome = process.env['WT_HOME'] ?? join(home, '.wt');
+const wtWorktreesDir = process.env['WT_WORKTREES_DIR'] ?? join(wtHome, 'worktrees');
+const defaultInitCommand = 'bun install --frozen-lockfile && bun run migrate-ledgers';
+const defaultRunCommand = 'bun run start:dev-fastest';
+const darkPanel = '#282C34';
+const darkInput = '#15161D';
+const darkInputFocused = '#3A2A36';
+const lightText = '#F3F4F6';
+const mutedText = '#9CA3AF';
+const pinkHex = '#F472B6';
+
+class WtError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WtError';
+  }
+}
+
+const colorEnabled =
+  process.env['NO_COLOR'] === undefined &&
+  !process.argv.includes('--no-color') &&
+  (process.env['FORCE_COLOR'] !== undefined ||
+    process.argv.includes('--color') ||
+    process.platform === 'win32' ||
+    (process.stdout.isTTY && process.env['TERM'] !== 'dumb') ||
+    process.env['CI'] !== undefined);
+
+const esc = '\u001B';
+const muted = (value: string): string => ansi(value, `${esc}[90m`, `${esc}[39m`);
+const black = (value: string): string => ansi(value, `${esc}[30m`, `${esc}[39m`);
+const bold = (value: string): string => ansi(value, `${esc}[1m`, `${esc}[22m`);
+const pink = (value: string): string => ansi(value, `${esc}[38;2;244;114;182m`, `${esc}[39m`);
+const pinkBg = (value: string): string => ansi(value, `${esc}[48;2;244;114;182m`, `${esc}[49m`);
+
+function ansi(value: string, open: string, close: string): string {
+  return colorEnabled ? `${open}${value}${close}` : value;
+}
+
+interface HelpRow {
   command: string;
   args?: string;
   description: string;
-};
+}
 
 const helpRows: HelpRow[] = [
-  { command: "init", description: "Create local worktree action config" },
-  { command: "new", args: "[--base REF] [--no-fetch] NAME", description: "Create a managed worktree" },
-  { command: "list", args: "[--all]", description: "Show managed worktrees" },
-  { command: "open", args: "[NAME|PATH]", description: "Open a worktree in Cursor" },
-  { command: "run", args: "ACTION", description: "Run an action in the current repo" },
-  { command: "run", args: "NAME|PATH ACTION", description: "Run an action in another worktree" },
-  { command: "archive", args: "[--force] NAME|PATH", description: "Remove a managed worktree" },
+  { command: 'init', description: 'Create local worktree action config' },
+  {
+    command: 'new',
+    args: '[--base REF] [--no-fetch] NAME',
+    description: 'Create a managed worktree',
+  },
+  { command: 'list', args: '[--all]', description: 'Show managed worktrees' },
+  { command: 'open', args: '[NAME|PATH]', description: 'Open a worktree in Cursor' },
+  { command: 'run', args: 'ACTION', description: 'Run an action in the current repo' },
+  { command: 'run', args: 'NAME|PATH ACTION', description: 'Run an action in another worktree' },
+  { command: 'archive', args: '[--force] NAME|PATH', description: 'Remove a managed worktree' },
 ];
 
 function helpLine({ command, args, description }: HelpRow, width: number): string {
-  const plain = `wt ${command}${args ? ` ${args}` : ""}`;
-  const styled = `${muted("wt")} ${pink(command)}${args ? ` ${muted(args)}` : ""}`;
-  return `  ${styled}${" ".repeat(width - plain.length)}  ${description}`;
+  const plain = `wt ${command}${args === undefined ? '' : ` ${args}`}`;
+  const styled = `${muted('wt')} ${pink(command)}${args === undefined ? '' : ` ${muted(args)}`}`;
+  return `  ${styled}${' '.repeat(width - plain.length)}  ${description}`;
 }
 
 function helpSection(label: string): string {
@@ -70,28 +90,32 @@ function helpSection(label: string): string {
 }
 
 function usage(): string {
-  const commandWidth = Math.max(...helpRows.map(({ command, args }) => `wt ${command}${args ? ` ${args}` : ""}`.length));
-  const title = `${pinkBg(black(" wt "))} ${bold("Git worktrees, kept close")}`;
-  const actionPath = `${muted("<base-repo>")}/${pink(".wt/actions.json")}`;
+  const commandWidth = Math.max(
+    ...helpRows.map(
+      ({ command, args }) => `wt ${command}${args === undefined ? '' : ` ${args}`}`.length,
+    ),
+  );
+  const title = `${pinkBg(black(' wt '))} ${bold('Git worktrees, kept close')}`;
+  const actionPath = `${muted('<base-repo>')}/${pink('.wt/actions.json')}`;
 
   return [
-    "",
+    '',
     title,
-    muted("Small Bun CLI for making, opening, and running Git worktrees."),
-    "",
-    helpSection("Commands"),
+    muted('Small Bun CLI for making, opening, and running Git worktrees.'),
+    '',
+    helpSection('Commands'),
     ...helpRows.map((row) => helpLine(row, commandWidth)),
-    "",
-    helpSection("Storage"),
-    `  ${muted("worktrees")}  ${pink("~/.wt/worktrees")}/${muted("<project-name>/<worktree-name>")}`,
-    `  ${muted("actions")}    ${actionPath}`,
-    "",
-    helpSection("Examples"),
-    `  ${muted("$")} wt ${pink("init")}`,
-    `  ${muted("$")} wt ${pink("new")} ${muted("--base origin/main")} nako-haru-7188`,
-    `  ${muted("$")} wt ${pink("run")} ${muted("nako-haru-7188 dev")}`,
-    `  ${muted("$")} wt ${pink("archive")} ${muted("--force nako-haru-7188")}`,
-  ].join("\n");
+    '',
+    helpSection('Storage'),
+    `  ${muted('worktrees')}  ${pink('~/.wt/worktrees')}/${muted('<project-name>/<worktree-name>')}`,
+    `  ${muted('actions')}    ${actionPath}`,
+    '',
+    helpSection('Examples'),
+    `  ${muted('$')} wt ${pink('init')}`,
+    `  ${muted('$')} wt ${pink('new')} ${muted('--base origin/main')} nako-haru-7188`,
+    `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
+    `  ${muted('$')} wt ${pink('archive')} ${muted('--force nako-haru-7188')}`,
+  ].join('\n');
 }
 
 function fail(message: string): never {
@@ -103,292 +127,386 @@ function runBin(
   args: string[],
   options: { cwd?: string; inherit?: boolean; allowFail?: boolean } = {},
 ): string {
-  const proc = Bun.spawnSync([bin, ...args], {
-    cwd: options.cwd,
-    stdout: options.inherit ? "inherit" : "pipe",
-    stderr: options.inherit ? "inherit" : "pipe",
-    stdin: "inherit",
-  });
+  const spawnOptions = {
+    stdout: options.inherit === true ? 'inherit' : 'pipe',
+    stderr: options.inherit === true ? 'inherit' : 'pipe',
+    stdin: 'inherit',
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+  } as const;
+  const proc = Bun.spawnSync([bin, ...args], spawnOptions);
 
-  if (proc.exitCode !== 0 && !options.allowFail) {
-    const stderr = proc.stderr ? new TextDecoder().decode(proc.stderr).trim() : "";
-    fail(stderr || `${bin} ${args.join(" ")} failed`);
+  if (proc.exitCode !== 0 && options.allowFail !== true) {
+    const stderr = proc.stderr === undefined ? '' : new TextDecoder().decode(proc.stderr).trim();
+    fail(stderr || `${bin} ${args.join(' ')} failed`);
   }
 
-  return proc.stdout ? new TextDecoder().decode(proc.stdout).trimEnd() : "";
+  return proc.stdout === undefined ? '' : new TextDecoder().decode(proc.stdout).trimEnd();
 }
 
-function git(args: string[], cwd = process.cwd(), options: { inherit?: boolean; allowFail?: boolean } = {}): string {
-  return runBin("git", args, { cwd, ...options });
+function git(
+  args: string[],
+  cwd = process.cwd(),
+  options: { inherit?: boolean; allowFail?: boolean } = {},
+): string {
+  return runBin('git', args, { cwd, ...options });
 }
 
 function isGitRepo(cwd = process.cwd()): boolean {
-  const proc = Bun.spawnSync(["git", "rev-parse", "--is-inside-work-tree"], {
+  const proc = Bun.spawnSync(['git', 'rev-parse', '--is-inside-work-tree'], {
     cwd,
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: 'ignore',
+    stderr: 'ignore',
   });
   return proc.exitCode === 0;
 }
 
 function requireGitRepo(cwd = process.cwd()): void {
-  if (!isGitRepo(cwd)) fail("must be run inside a git repository");
+  if (!isGitRepo(cwd)) {
+    fail('must be run inside a git repository');
+  }
 }
 
 function repoRoot(cwd = process.cwd()): string {
-  return git(["rev-parse", "--show-toplevel"], cwd);
+  return git(['rev-parse', '--show-toplevel'], cwd);
 }
 
 function gitCommonDir(cwd = process.cwd()): string {
-  return git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd);
+  return git(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
 }
 
 function baseRepoRoot(cwd = process.cwd()): string {
   const root = repoRoot(cwd);
   const common = gitCommonDir(cwd);
-  return common.endsWith("/.git") ? dirname(common) : root;
+  return common.endsWith('/.git') ? dirname(common) : root;
 }
 
 function projectName(cwd = process.cwd()): string {
-  return baseRepoRoot(cwd).split("/").filter(Boolean).at(-1) ?? "project";
+  return (
+    baseRepoRoot(cwd)
+      .split('/')
+      .findLast((part) => part !== '') ?? 'project'
+  );
 }
 
 function refExists(ref: string, cwd = process.cwd()): boolean {
-  const proc = Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet", ref], {
+  const proc = Bun.spawnSync(['git', 'rev-parse', '--verify', '--quiet', ref], {
     cwd,
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: 'ignore',
+    stderr: 'ignore',
   });
   return proc.exitCode === 0;
 }
 
 function defaultBaseRef(cwd = process.cwd()): string {
-  for (const remote of ["origin", "upstream"]) {
+  for (const remote of ['origin', 'upstream']) {
     if (refExists(`refs/remotes/${remote}/HEAD`, cwd)) {
-      const ref = git(["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`], cwd, {
+      const ref = git(['symbolic-ref', '--quiet', '--short', `refs/remotes/${remote}/HEAD`], cwd, {
         allowFail: true,
       });
-      if (ref && refExists(ref, cwd)) return ref;
+      if (ref !== '' && refExists(ref, cwd)) {
+        return ref;
+      }
     }
   }
 
   for (const ref of [
-    "origin/develop",
-    "origin/main",
-    "origin/master",
-    "upstream/develop",
-    "upstream/main",
-    "upstream/master",
-    "develop",
-    "main",
-    "master",
+    'origin/develop',
+    'origin/main',
+    'origin/master',
+    'upstream/develop',
+    'upstream/main',
+    'upstream/master',
+    'develop',
+    'main',
+    'master',
   ]) {
-    if (refExists(ref, cwd)) return ref;
+    if (refExists(ref, cwd)) {
+      return ref;
+    }
   }
 
-  fail("could not determine a base ref; pass --base REF");
+  return fail('could not determine a base ref; pass --base REF');
 }
 
 function validateWorktreeName(name: string): void {
-  if (!name) fail("missing worktree name");
-  if (isAbsolute(name)) fail("worktree name must not be an absolute path");
-  if (name.startsWith(".") || name.includes("/.")) fail("worktree name must not contain hidden path components");
+  if (name === '') {
+    fail('missing worktree name');
+  }
+  if (isAbsolute(name)) {
+    fail('worktree name must not be an absolute path');
+  }
+  if (name.startsWith('.') || name.includes('/.')) {
+    fail('worktree name must not contain hidden path components');
+  }
 
-  const proc = Bun.spawnSync(["git", "check-ref-format", "--branch", name], {
-    stdout: "ignore",
-    stderr: "ignore",
+  const proc = Bun.spawnSync(['git', 'check-ref-format', '--branch', name], {
+    stdout: 'ignore',
+    stderr: 'ignore',
   });
-  if (proc.exitCode !== 0) fail(`invalid git branch name: ${name}`);
+  if (proc.exitCode !== 0) {
+    fail(`invalid git branch name: ${name}`);
+  }
 }
 
 function walkManagedWorktrees(scope?: string): string[] {
-  const base = scope ? join(wtWorktreesDir, scope) : wtWorktreesDir;
-  if (!existsSync(base)) return [];
+  const base = scope === undefined ? wtWorktreesDir : join(wtWorktreesDir, scope);
+  if (!existsSync(base)) {
+    return [];
+  }
 
   const out: string[] = [];
   const stack = [base];
   while (stack.length > 0) {
     const current = stack.pop()!;
-    if (existsSync(join(current, ".git"))) {
+    if (existsSync(join(current, '.git'))) {
       out.push(current);
       continue;
     }
 
     const entries = readdirSync(current, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) stack.push(join(current, entry.name));
+      if (entry.isDirectory()) {
+        stack.push(join(current, entry.name));
+      }
     }
   }
 
-  return out.sort();
+  return out.toSorted();
 }
 
 function worktreeName(path: string, project?: string): string {
-  const prefix = project ? join(wtWorktreesDir, project) : wtWorktreesDir;
+  const prefix = project === undefined ? wtWorktreesDir : join(wtWorktreesDir, project);
   return relative(prefix, path);
 }
 
 function worktreeBranch(path: string): string {
-  const branch = git(["branch", "--show-current"], path, { allowFail: true });
-  return branch || git(["rev-parse", "--short", "HEAD"], path, { allowFail: true }) || "unknown";
+  const branch = git(['branch', '--show-current'], path, { allowFail: true });
+  if (branch !== '') {
+    return branch;
+  }
+
+  const commit = git(['rev-parse', '--short', 'HEAD'], path, { allowFail: true });
+  return commit === '' ? 'unknown' : commit;
 }
 
 function resolveWorktree(target?: string): string {
-  if (!target) {
+  if (target === undefined || target === '') {
     requireGitRepo();
     return repoRoot();
   }
 
   if (existsSync(target) && lstatSync(target).isDirectory()) {
-    return realpathSync(resolve(target));
+    return realpathSync(resolvePath(target));
   }
 
   if (isGitRepo()) {
     const project = projectName();
     const candidate = join(wtWorktreesDir, project, target);
-    if (existsSync(candidate)) return realpathSync(candidate);
+    if (existsSync(candidate)) {
+      return realpathSync(candidate);
+    }
   }
 
   const matches = walkManagedWorktrees().filter((path) => {
     const rel = relative(wtWorktreesDir, path);
-    const [, ...nameParts] = rel.split("/");
-    return nameParts.join("/") === target || rel === target;
+    const [, ...nameParts] = rel.split('/');
+    return nameParts.join('/') === target || rel === target;
   });
 
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) fail(`worktree not found: ${target}`);
-  fail(`multiple worktrees named '${target}'; run from the project repo or pass a path`);
+  const [match] = matches;
+  if (match !== undefined && matches.length === 1) {
+    return match;
+  }
+  if (matches.length === 0) {
+    fail(`worktree not found: ${target}`);
+  }
+  return fail(`multiple worktrees named '${target}'; run from the project repo or pass a path`);
 }
 
 function actionsFileForPath(path: string): string {
-  return join(baseRepoRoot(path), ".wt", "actions.json");
+  return join(baseRepoRoot(path), '.wt', 'actions.json');
 }
 
 function readActions(path: string): ActionConfig {
   const file = actionsFileForPath(path);
-  if (!existsSync(file)) return {};
-  return JSON.parse(readFileSync(file, "utf8")) as ActionConfig;
+  if (!existsSync(file)) {
+    return {};
+  }
+  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  if (isActionConfig(parsed)) {
+    return parsed;
+  }
+  return fail(`invalid actions.json at ${file}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isActionConfig(value: unknown): value is ActionConfig {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => {
+    if (!isRecord(entry)) {
+      return false;
+    }
+
+    const { command } = entry;
+    return command === undefined || typeof command === 'string';
+  });
 }
 
 function actionNames(path: string): string[] {
   return Object.entries(readActions(path))
-    .filter(([, value]) => typeof value.command === "string" && value.command.length > 0)
+    .filter(([, value]) => typeof value.command === 'string' && value.command.length > 0)
     .map(([name]) => name)
-    .sort();
+    .toSorted();
 }
 
-function ellipsis(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  if (maxLength <= 3) return ".".repeat(maxLength);
-  return `${text.slice(0, maxLength - 3)}...`;
+function ellipsis(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  if (maxLength <= 3) {
+    return '.'.repeat(maxLength);
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
 }
 
 function actionHint(label: string, command?: string): string | undefined {
-  if (!command) return undefined;
+  if (command === undefined || command === '') {
+    return undefined;
+  }
 
-  const columns = process.stdout.columns || 80;
+  const columns = process.stdout.columns ?? 80;
   const maxLength = Math.max(12, Math.min(34, columns - label.length - 13));
-  return ellipsis(command.replace(/\s+/g, " ").trim(), maxLength);
+  return ellipsis(command.replaceAll(/\s+/gu, ' ').trim(), maxLength);
 }
 
-async function runAction(path: string, action: string): Promise<void> {
+function runAction(path: string, action: string): void {
   const file = actionsFileForPath(path);
   const actions = readActions(path);
   const command = actions[action]?.command;
-  if (!existsSync(file)) fail(`no actions.json found at ${file}`);
-  if (!command) fail(`action not found or missing command: ${action}`);
+  if (!existsSync(file)) {
+    fail(`no actions.json found at ${file}`);
+  }
+  if (command === undefined || command === '') {
+    fail(`action not found or missing command: ${action}`);
+  }
 
-  console.log(`${pc.cyan("◆")} ${pc.bold(action)} ${pc.dim(`in ${path}`)}`);
-  console.log(`${pc.dim("$")} ${command}`);
+  console.log(`${pc.cyan('◆')} ${pc.bold(action)} ${pc.dim(`in ${path}`)}`);
+  console.log(`${pc.dim('$')} ${command}`);
 
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  const proc = Bun.spawnSync([shell, "-lc", command], {
+  const shell = process.env['SHELL'] ?? '/bin/zsh';
+  const proc = Bun.spawnSync([shell, '-lc', command], {
     cwd: path,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
   });
-  if (proc.exitCode !== 0) fail(`action '${action}' failed with exit code ${proc.exitCode}`);
+  if (proc.exitCode !== 0) {
+    fail(`action '${action}' failed with exit code ${proc.exitCode}`);
+  }
 }
 
-async function runInitIfPresent(path: string): Promise<void> {
-  if (actionNames(path).includes("init")) {
-    await runAction(path, "init");
+function runInitIfPresent(path: string): void {
+  if (actionNames(path).includes('init')) {
+    runAction(path, 'init');
   }
 }
 
 async function chooseWorktree(prompt: string, scopeCurrentProject = true): Promise<string> {
   let scope: string | undefined;
-  if (scopeCurrentProject && isGitRepo()) scope = projectName();
+  if (scopeCurrentProject && isGitRepo()) {
+    scope = projectName();
+  }
 
   const paths = walkManagedWorktrees(scope);
-  if (paths.length === 0) fail("no managed worktrees found");
+  if (paths.length === 0) {
+    fail('no managed worktrees found');
+  }
 
   const selected = await select({
     message: prompt,
     options: paths.map((path) => ({
       value: path,
-      label: scope ? worktreeName(path, scope) : relative(wtWorktreesDir, path),
+      label: scope === undefined ? relative(wtWorktreesDir, path) : worktreeName(path, scope),
       hint: worktreeBranch(path),
     })),
   });
   if (isCancel(selected)) {
-    cancel("cancelled");
+    cancel('cancelled');
     process.exit(1);
   }
-  return selected as string;
+  return selected;
 }
 
 async function chooseAction(path: string): Promise<string> {
   const names = actionNames(path);
-  if (names.length === 0) fail(`no actions found for ${path}`);
+  if (names.length === 0) {
+    fail(`no actions found for ${path}`);
+  }
 
   const actions = readActions(path);
   const selected = await select({
-    message: "Choose an action",
-    options: names.map((name) => ({ value: name, label: name, hint: actionHint(name, actions[name]?.command) })),
+    message: 'Choose an action',
+    options: names.map((name) => {
+      const hint = actionHint(name, actions[name]?.command);
+      return hint === undefined ? { value: name, label: name } : { value: name, label: name, hint };
+    }),
   });
   if (isCancel(selected)) {
-    cancel("cancelled");
+    cancel('cancelled');
     process.exit(1);
   }
-  return selected as string;
+  return selected;
 }
 
 function fetchRemotes(cwd = process.cwd()): void {
-  const remotes = git(["remote"], cwd, { allowFail: true });
-  if (!remotes.trim()) return;
-  const s = spinner();
-  s.start("Fetching remotes");
-  const proc = Bun.spawnSync(["git", "fetch", "--prune", "--all"], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (proc.exitCode === 0) {
-    s.stop("Fetched remotes");
+  const remotes = git(['remote'], cwd, { allowFail: true });
+  if (remotes.trim() === '') {
     return;
   }
-  s.stop("Fetch failed");
-  const stderr = proc.stderr ? new TextDecoder().decode(proc.stderr).trim() : "";
-  fail(stderr || "git fetch failed");
+  const s = spinner();
+  s.start('Fetching remotes');
+  const proc = Bun.spawnSync(['git', 'fetch', '--prune', '--all'], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  if (proc.exitCode === 0) {
+    s.stop('Fetched remotes');
+    return;
+  }
+  s.stop('Fetch failed');
+  const stderr = proc.stderr === undefined ? '' : new TextDecoder().decode(proc.stderr).trim();
+  fail(stderr || 'git fetch failed');
 }
 
 function requiredText(value: string | undefined): string | undefined {
-  if (!value?.trim()) return "Enter a command";
+  if (value === undefined || value.trim() === '') {
+    return 'Enter a command';
+  }
   return undefined;
 }
 
-async function promptCommand(message: string, placeholder: string, initialValue?: string): Promise<string> {
-  const value = await text({
+async function promptCommand(
+  message: string,
+  placeholder: string,
+  initialValue?: string,
+): Promise<string> {
+  const options = {
     message,
     placeholder,
-    initialValue,
     validate: requiredText,
-  });
+    ...(initialValue === undefined ? {} : { initialValue }),
+  };
+  const value = await text(options);
 
   if (isCancel(value)) {
-    cancel("cancelled");
+    cancel('cancelled');
     process.exit(1);
   }
 
@@ -396,9 +514,17 @@ async function promptCommand(message: string, placeholder: string, initialValue?
 }
 
 async function promptInitCommandsFallback(existing: ActionConfig): Promise<InitCommands> {
-  intro("wt init");
-  const initCommand = await promptCommand("Init command", defaultInitCommand, existing.init?.command);
-  const runCommand = await promptCommand("Run command", defaultRunCommand, existing.run?.command);
+  intro('wt init');
+  const initCommand = await promptCommand(
+    'Init command',
+    defaultInitCommand,
+    existing['init']?.command,
+  );
+  const runCommand = await promptCommand(
+    'Run command',
+    defaultRunCommand,
+    existing['run']?.command,
+  );
   return { initCommand, runCommand };
 }
 
@@ -409,11 +535,11 @@ async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCo
     InputRenderableEvents,
     TextRenderable,
     createCliRenderer,
-  } = await import("@opentui/core");
+  } = await import('@opentui/core');
 
   const renderer = await createCliRenderer({
-    screenMode: "main-screen",
-    consoleMode: "disabled",
+    screenMode: 'main-screen',
+    consoleMode: 'disabled',
     exitOnCtrlC: false,
     useMouse: false,
     useKittyKeyboard: null,
@@ -424,32 +550,32 @@ async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCo
   const width = Math.min(Math.max(64, renderer.width - 4), 94);
   const inputWidth = Math.max(32, width - 18);
   const panel = new BoxRenderable(renderer, {
-    id: "wt-init-form",
+    id: 'wt-init-form',
     width,
     height: 11,
     border: true,
-    borderStyle: "rounded",
+    borderStyle: 'rounded',
     borderColor: pinkHex,
-    title: " wt init ",
+    title: ' wt init ',
     titleColor: pinkHex,
-    bottomTitle: " Esc cancels ",
+    bottomTitle: ' Esc cancels ',
     backgroundColor: darkPanel,
     padding: 1,
-    flexDirection: "column",
+    flexDirection: 'column',
     gap: 1,
   });
 
   const help = new TextRenderable(renderer, {
-    id: "help",
-    content: "Edit local worktree actions. Tab switches fields. Enter saves from Run.",
+    id: 'help',
+    content: 'Edit local worktree actions. Tab switches fields. Enter saves from Run.',
     fg: mutedText,
     height: 1,
     truncate: true,
   });
   const error = new TextRenderable(renderer, {
-    id: "error",
-    content: "",
-    fg: "#FCA5A5",
+    id: 'error',
+    content: '',
+    fg: '#FCA5A5',
     height: 1,
     truncate: true,
   });
@@ -457,9 +583,9 @@ async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCo
   function labeledInput(id: string, label: string, value: string | undefined, placeholder: string) {
     const row = new BoxRenderable(renderer, {
       id: `${id}-row`,
-      width: "100%",
+      width: '100%',
       height: 1,
-      flexDirection: "row",
+      flexDirection: 'row',
       gap: 1,
     });
     row.add(
@@ -474,7 +600,7 @@ async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCo
     const input = new InputRenderable(renderer, {
       id,
       width: inputWidth,
-      value: value ?? "",
+      value: value ?? '',
       placeholder,
       minLength: 1,
       maxLength: 500,
@@ -489,8 +615,8 @@ async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCo
     return { row, input };
   }
 
-  const init = labeledInput("init-command", "Init", existing.init?.command, defaultInitCommand);
-  const run = labeledInput("run-command", "Run", existing.run?.command, defaultRunCommand);
+  const init = labeledInput('init-command', 'Init', existing['init']?.command, defaultInitCommand);
+  const run = labeledInput('run-command', 'Run', existing['run']?.command, defaultRunCommand);
 
   panel.add(help);
   panel.add(init.row);
@@ -513,24 +639,24 @@ async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCo
     renderer.requestRender();
   };
 
-  return await new Promise<InitCommands>((resolve, reject) => {
+  return new Promise<InitCommands>((resolve, reject) => {
     let done = false;
 
     const cleanup = () => {
-      renderer.keyInput.off("keypress", onKeypress);
+      renderer.keyInput.off('keypress', onKeypress);
       renderer.destroy();
     };
 
     const finish = () => {
       const initCommand = init.input.value.trim();
       const runCommand = run.input.value.trim();
-      if (!initCommand) {
-        setError("Init command is required.");
+      if (initCommand === '') {
+        setError('Init command is required.');
         setFocus(0);
         return;
       }
-      if (!runCommand) {
-        setError("Run command is required.");
+      if (runCommand === '') {
+        setError('Run command is required.');
         setFocus(1);
         return;
       }
@@ -540,47 +666,51 @@ async function promptInitCommandsOpenTui(existing: ActionConfig): Promise<InitCo
       resolve({ initCommand, runCommand });
     };
 
-    const onKeypress = (key: import("@opentui/core").KeyEvent) => {
-      if (key.name === "tab") {
+    const onKeypress = (key: KeyEvent) => {
+      if (key.name === 'tab') {
         key.preventDefault();
-        setError("");
+        setError('');
         setFocus((focusIndex + 1) % inputs.length);
         return;
       }
-      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+      if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
         done = true;
         cleanup();
-        reject(new WtError("cancelled"));
+        reject(new WtError('cancelled'));
       }
     };
 
     init.input.on(InputRenderableEvents.ENTER, () => {
-      setError("");
+      setError('');
       setFocus(1);
     });
     run.input.on(InputRenderableEvents.ENTER, finish);
-    renderer.keyInput.on("keypress", onKeypress);
+    renderer.keyInput.on('keypress', onKeypress);
 
     setFocus(0);
     renderer.start();
     renderer.requestRender();
 
-    renderer.on("destroy", () => {
-      if (!done) reject(new WtError("cancelled"));
+    renderer.on('destroy', () => {
+      if (!done) {
+        reject(new WtError('cancelled'));
+      }
     });
   });
 }
 
 async function promptInitCommands(existing: ActionConfig): Promise<InitCommands> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    return await promptInitCommandsFallback(existing);
+    return promptInitCommandsFallback(existing);
   }
 
   try {
     return await promptInitCommandsOpenTui(existing);
   } catch (error) {
-    if (error instanceof WtError) throw error;
-    return await promptInitCommandsFallback(existing);
+    if (error instanceof WtError) {
+      throw error;
+    }
+    return promptInitCommandsFallback(existing);
   }
 }
 
@@ -588,7 +718,7 @@ async function cmdInit(args: string[]): Promise<void> {
   requireGitRepo();
 
   if (args.length > 0) {
-    if (args.length === 1 && (args[0] === "-h" || args[0] === "--help")) {
+    if (args.length === 1 && (args[0] === '-h' || args[0] === '--help')) {
       console.log(usage());
       return;
     }
@@ -596,9 +726,9 @@ async function cmdInit(args: string[]): Promise<void> {
   }
 
   const root = baseRepoRoot();
-  const wtDir = join(root, ".wt");
-  const ignoreFile = join(wtDir, ".gitignore");
-  const actionsFile = join(wtDir, "actions.json");
+  const wtDir = join(root, '.wt');
+  const ignoreFile = join(wtDir, '.gitignore');
+  const actionsFile = join(wtDir, 'actions.json');
   let existing: ActionConfig = {};
   if (existsSync(actionsFile)) {
     try {
@@ -615,97 +745,117 @@ async function cmdInit(args: string[]): Promise<void> {
   };
 
   mkdirSync(wtDir, { recursive: true });
-  if (!existsSync(ignoreFile)) writeFileSync(ignoreFile, "*\n");
+  if (!existsSync(ignoreFile)) {
+    writeFileSync(ignoreFile, '*\n');
+  }
   writeFileSync(actionsFile, `${JSON.stringify(actions, null, 2)}\n`);
 
-  console.log(`${pc.green("created")} ${relative(root, actionsFile)} ${pc.dim(`in ${root}`)}`);
+  console.log(`${pc.green('created')} ${relative(root, actionsFile)} ${pc.dim(`in ${root}`)}`);
 }
 
-async function cmdNew(args: string[]): Promise<void> {
+function cmdNew(args: string[]): void {
   requireGitRepo();
-  let base = "";
+  let base = '';
   let doFetch = true;
-  let name = "";
+  let name = '';
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === "--base") {
-      base = args[++i] ?? fail("--base requires a value");
-    } else if (arg.startsWith("--base=")) {
-      base = arg.slice("--base=".length);
-    } else if (arg === "--no-fetch") {
+    if (arg === '--base') {
+      base = args[++i] ?? fail('--base requires a value');
+    } else if (arg.startsWith('--base=')) {
+      base = arg.slice('--base='.length);
+    } else if (arg === '--no-fetch') {
       doFetch = false;
-    } else if (arg === "-h" || arg === "--help") {
+    } else if (arg === '-h' || arg === '--help') {
       console.log(usage());
       return;
-    } else if (arg.startsWith("-")) {
+    } else if (arg.startsWith('-')) {
       fail(`unknown option for new: ${arg}`);
-    } else if (!name) {
+    } else if (name === '') {
       name = arg;
     } else {
-      fail("new accepts one NAME");
+      fail('new accepts one NAME');
     }
   }
 
-  if (!name) fail("new requires NAME");
+  if (name === '') {
+    fail('new requires NAME');
+  }
   validateWorktreeName(name);
 
-  if (doFetch) fetchRemotes();
-  if (!base) base = defaultBaseRef();
+  if (doFetch) {
+    fetchRemotes();
+  }
+  if (base === '') {
+    base = defaultBaseRef();
+  }
 
   const project = projectName();
   const target = join(wtWorktreesDir, project, name);
-  if (existsSync(target)) fail(`target already exists: ${target}`);
+  if (existsSync(target)) {
+    fail(`target already exists: ${target}`);
+  }
 
   mkdirSync(dirname(target), { recursive: true });
-  const branchExists = Bun.spawnSync(["git", "show-ref", "--verify", "--quiet", `refs/heads/${name}`], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).exitCode === 0;
+  const branchExists =
+    Bun.spawnSync(['git', 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    }).exitCode === 0;
 
   intro(`wt new ${name}`);
-  const gitArgs = branchExists ? ["worktree", "add", target, name] : ["worktree", "add", "-b", name, target, base];
+  const gitArgs = branchExists
+    ? ['worktree', 'add', target, name]
+    : ['worktree', 'add', '-b', name, target, base];
   git(gitArgs, process.cwd(), { inherit: true });
-  await runInitIfPresent(target);
-  outro(`${pc.green("created")} ${target}`);
+  runInitIfPresent(target);
+  outro(`${pc.green('created')} ${target}`);
 }
 
 function cmdList(args: string[]): void {
-  const all = args.includes("--all") || args.includes("-a");
-  if (args.some((arg) => !["--all", "-a"].includes(arg))) fail(`unknown option for list: ${args.find((arg) => !["--all", "-a"].includes(arg))}`);
+  const all = args.includes('--all') || args.includes('-a');
+  if (args.some((arg) => !['--all', '-a'].includes(arg))) {
+    fail(`unknown option for list: ${args.find((arg) => !['--all', '-a'].includes(arg))}`);
+  }
 
   const scope = !all && isGitRepo() ? projectName() : undefined;
   const paths = walkManagedWorktrees(scope);
 
-  console.log(pc.bold("Worktrees"));
+  console.log(pc.bold('Worktrees'));
   if (paths.length === 0) {
-    console.log(pc.dim("No managed worktrees found."));
+    console.log(pc.dim('No managed worktrees found.'));
     return;
   }
 
   for (const path of paths) {
     const rel = relative(wtWorktreesDir, path);
-    const [project, ...nameParts] = rel.split("/");
-    const name = nameParts.join("/");
-    console.log(`${pc.cyan("◆")} ${pc.bold(project)} ${pc.green(name)} ${pc.dim(worktreeBranch(path))}`);
+    const [project, ...nameParts] = rel.split('/');
+    const name = nameParts.join('/');
+    console.log(
+      `${pc.cyan('◆')} ${pc.bold(project)} ${pc.green(name)} ${pc.dim(worktreeBranch(path))}`,
+    );
     console.log(`  ${pc.dim(path)}`);
   }
 }
 
 async function cmdOpen(args: string[]): Promise<void> {
-  if (args.length > 1) fail("open accepts at most one NAME or PATH");
-  const path = args[0] ? resolveWorktree(args[0]) : await chooseWorktree("Open which worktree?");
+  if (args.length > 1) {
+    fail('open accepts at most one NAME or PATH');
+  }
+  const path =
+    args[0] === undefined ? await chooseWorktree('Open which worktree?') : resolveWorktree(args[0]);
 
-  const cursor = Bun.which("cursor");
-  if (cursor) {
+  const cursor = Bun.which('cursor');
+  if (cursor !== null && cursor !== undefined) {
     runBin(cursor, [path], { inherit: true });
-  } else if (existsSync("/Applications/Cursor.app")) {
-    runBin("open", ["-a", "Cursor", path], { inherit: true });
+  } else if (existsSync('/Applications/Cursor.app')) {
+    runBin('open', ['-a', 'Cursor', path], { inherit: true });
   } else {
-    fail("Cursor CLI not found and /Applications/Cursor.app does not exist");
+    fail('Cursor CLI not found and /Applications/Cursor.app does not exist');
   }
 
-  console.log(`${pc.green("opened")} ${path}`);
+  console.log(`${pc.green('opened')} ${path}`);
 }
 
 async function cmdRun(args: string[]): Promise<void> {
@@ -713,7 +863,7 @@ async function cmdRun(args: string[]): Promise<void> {
   let action: string;
 
   if (args.length === 0) {
-    path = isGitRepo() ? repoRoot() : await chooseWorktree("Run action in which worktree?", false);
+    path = isGitRepo() ? repoRoot() : await chooseWorktree('Run action in which worktree?', false);
     action = await chooseAction(path);
   } else if (args.length === 1) {
     if (isGitRepo() && actionNames(repoRoot()).includes(args[0]!)) {
@@ -727,48 +877,61 @@ async function cmdRun(args: string[]): Promise<void> {
     path = resolveWorktree(args[0]);
     action = args[1]!;
   } else {
-    fail("run requires ACTION or NAME ACTION");
+    fail('run requires ACTION or NAME ACTION');
   }
 
-  await runAction(path, action);
+  runAction(path, action);
 }
 
 async function cmdArchive(args: string[]): Promise<void> {
   let force = false;
-  let target = "";
+  let target = '';
   for (const arg of args) {
-    if (arg === "--force" || arg === "-f") force = true;
-    else if (arg.startsWith("-")) fail(`unknown option for archive: ${arg}`);
-    else if (!target) target = arg;
-    else fail("archive accepts one NAME or PATH");
+    if (arg === '--force' || arg === '-f') {
+      force = true;
+    } else if (arg.startsWith('-')) {
+      fail(`unknown option for archive: ${arg}`);
+    } else if (target === '') {
+      target = arg;
+    } else {
+      fail('archive accepts one NAME or PATH');
+    }
   }
 
-  const path = target ? resolveWorktree(target) : await chooseWorktree("Archive which worktree?");
+  const path =
+    target === '' ? await chooseWorktree('Archive which worktree?') : resolveWorktree(target);
   if (!force) {
-    const ok = await confirm({ message: `Archive ${worktreeName(path, projectName(path))}?`, initialValue: false });
+    const ok = await confirm({
+      message: `Archive ${worktreeName(path, projectName(path))}?`,
+      initialValue: false,
+    });
     if (isCancel(ok) || !ok) {
-      cancel("cancelled");
+      cancel('cancelled');
       process.exit(1);
     }
   }
 
-  const argsForGit = force ? ["worktree", "remove", "--force", path] : ["worktree", "remove", path];
+  const argsForGit = force ? ['worktree', 'remove', '--force', path] : ['worktree', 'remove', path];
   git(argsForGit, path, { inherit: true });
-  console.log(`${pc.green("archived")} ${path}`);
+  console.log(`${pc.green('archived')} ${path}`);
 }
 
 function completeWorktrees(): void {
   const scope = isGitRepo() ? projectName() : undefined;
   for (const path of walkManagedWorktrees(scope)) {
-    console.log(scope ? worktreeName(path, scope) : relative(wtWorktreesDir, path));
+    console.log(scope === undefined ? relative(wtWorktreesDir, path) : worktreeName(path, scope));
   }
 }
 
 function completeRefs(): void {
-  const refs = git(["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"], process.cwd(), {
-    allowFail: true,
-  });
-  for (const ref of refs.split("\n").filter((line) => line && !line.endsWith("/HEAD"))) {
+  const refs = git(
+    ['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'],
+    process.cwd(),
+    {
+      allowFail: true,
+    },
+  );
+  for (const ref of refs.split('\n').filter((line) => line !== '' && !line.endsWith('/HEAD'))) {
     console.log(ref);
   }
 }
@@ -776,68 +939,88 @@ function completeRefs(): void {
 function completeActions(target?: string): void {
   let path: string | undefined;
   try {
-    if (target) path = resolveWorktree(target);
-    else if (isGitRepo()) path = repoRoot();
+    if (target !== undefined && target !== '') {
+      path = resolveWorktree(target);
+    } else if (isGitRepo()) {
+      path = repoRoot();
+    }
   } catch {
     return;
   }
-  if (!path) return;
-  for (const name of actionNames(path)) console.log(name);
+  if (path === undefined || path === '') {
+    return;
+  }
+  for (const name of actionNames(path)) {
+    console.log(name);
+  }
 }
 
 async function main(): Promise<void> {
   const [cmd, ...args] = process.argv.slice(2);
-  if (!cmd) {
+  if (cmd === undefined || cmd === '') {
     console.log(usage());
     return;
   }
 
   switch (cmd) {
-    case "init":
+    case 'init': {
       await cmdInit(args);
       break;
-    case "new":
-      await cmdNew(args);
+    }
+    case 'new': {
+      cmdNew(args);
       break;
-    case "list":
-    case "ls":
+    }
+    case 'list':
+    case 'ls': {
       cmdList(args);
       break;
-    case "open":
+    }
+    case 'open': {
       await cmdOpen(args);
       break;
-    case "run":
+    }
+    case 'run': {
       await cmdRun(args);
       break;
-    case "archive":
-    case "rm":
-    case "remove":
-    case "delete":
+    }
+    case 'archive':
+    case 'rm':
+    case 'remove':
+    case 'delete': {
       await cmdArchive(args);
       break;
-    case "__complete-worktrees":
+    }
+    case '__complete-worktrees': {
       completeWorktrees();
       break;
-    case "__complete-refs":
+    }
+    case '__complete-refs': {
       completeRefs();
       break;
-    case "__complete-actions":
+    }
+    case '__complete-actions': {
       completeActions(args[0]);
       break;
-    case "-h":
-    case "--help":
-    case "help":
+    }
+    case '-h':
+    case '--help':
+    case 'help': {
       console.log(usage());
       break;
-    default:
+    }
+    default: {
       fail(`unknown command: ${cmd}`);
+    }
   }
 }
 
-main().catch((error: unknown) => {
+try {
+  await main();
+} catch (error) {
   if (error instanceof WtError) {
-    console.error(`${pc.red("wt:")} ${error.message}`);
+    console.error(`${pc.red('wt:')} ${error.message}`);
     process.exit(1);
   }
   throw error;
-});
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "promise", "node"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "error",
+    "perf": "error",
+    "restriction": "error",
+    "style": "error"
+  },
+  "options": {
+    "denyWarnings": true,
+    "maxWarnings": 0,
+    "reportUnusedDisableDirectives": "error",
+    "respectEslintDisableDirectives": false,
+    "typeAware": true,
+    "typeCheck": true
+  },
+  "rules": {
+    "func-style": "off",
+    "id-length": "off",
+    "import/no-nodejs-modules": "off",
+    "init-declarations": "off",
+    "max-lines": "off",
+    "max-lines-per-function": "off",
+    "max-params": "off",
+    "max-statements": "off",
+    "no-continue": "off",
+    "no-console": "off",
+    "no-magic-numbers": "off",
+    "no-negated-condition": "off",
+    "no-plusplus": "off",
+    "no-ternary": "off",
+    "no-undefined": "off",
+    "no-use-before-define": "off",
+    "node/no-process-env": "off",
+    "oxc/no-async-await": "off",
+    "oxc/no-optional-chaining": "off",
+    "oxc/no-rest-spread-properties": "off",
+    "promise/avoid-new": "off",
+    "promise/prefer-await-to-callbacks": "off",
+    "sort-imports": "off",
+    "sort-keys": "off",
+    "typescript/explicit-function-return-type": "off",
+    "typescript/explicit-member-accessibility": "off",
+    "typescript/no-non-null-assertion": "off",
+    "typescript/prefer-readonly-parameter-types": "off",
+    "unicorn/import-style": "off",
+    "unicorn/no-negated-condition": "off",
+    "unicorn/no-null": "off"
+  }
+}
