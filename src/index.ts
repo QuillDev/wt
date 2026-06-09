@@ -85,6 +85,7 @@ const helpRows: HelpRow[] = [
   { command: 'goto', args: '[root|NAME|PATH]', description: 'Print a directory for cd' },
   { command: 'shell-init', description: 'Print shell integration for goto' },
   { command: 'open', args: '[NAME|PATH]', description: 'Open a worktree in Cursor' },
+  { command: 'rename', args: 'NAME|PATH NEW_NAME', description: 'Rename a managed worktree' },
   { command: 'run', args: 'ACTION', description: 'Run an action in the current repo' },
   { command: 'run', args: 'NAME|PATH ACTION', description: 'Run an action in another worktree' },
   {
@@ -141,6 +142,7 @@ function usage(): string {
     `  ${muted('$')} eval ${muted('"$(wt shell-init)"')}`,
     `  ${muted('$')} wt ${pink('goto')} ${muted('root')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
+    `  ${muted('$')} wt ${pink('rename')} ${muted('nako-haru-7188 nako-tsubaki-2043')}`,
     `  ${muted('$')} wt ${pink('archive')} ${muted('nako-haru-7188')}`,
   ].join('\n');
 }
@@ -318,7 +320,7 @@ function walkManagedWorktrees(scope?: string): string[] {
 
 function worktreeName(path: string, project?: string): string {
   const prefix = project === undefined ? wtWorktreesDir : join(wtWorktreesDir, project);
-  return relative(prefix, path);
+  return relative(realpathIfExists(prefix), realpathIfExists(path));
 }
 
 function worktreeBranch(path: string): string {
@@ -336,6 +338,14 @@ function isPathInside(child: string, parent: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
+function realpathIfExists(path: string): string {
+  return existsSync(path) ? realpathSync(path) : resolvePath(path);
+}
+
+function isSameOrInsideExistingPath(child: string, parent: string): boolean {
+  return isPathInside(realpathIfExists(child), realpathIfExists(parent));
+}
+
 function archiveTimestamp(): string {
   return new Date().toISOString().slice(0, 19).replaceAll(':', '').replace('T', '-');
 }
@@ -343,7 +353,7 @@ function archiveTimestamp(): string {
 function archiveDestination(path: string): string {
   const project = projectName(path);
   const managedRoot = join(wtWorktreesDir, project);
-  const name = isPathInside(path, managedRoot)
+  const name = isSameOrInsideExistingPath(path, managedRoot)
     ? worktreeName(path, project).replaceAll('/', '__')
     : path
         .split('/')
@@ -355,6 +365,15 @@ function archiveDestination(path: string): string {
     destination = `${base}-${suffix}`;
   }
   return destination;
+}
+
+function managedWorktreeProject(path: string): string | undefined {
+  if (!isSameOrInsideExistingPath(path, wtWorktreesDir)) {
+    return undefined;
+  }
+
+  const [project] = relative(realpathIfExists(wtWorktreesDir), realpathIfExists(path)).split('/');
+  return project === undefined || project === '' ? undefined : project;
 }
 
 function resolveWorktree(target?: string): string {
@@ -1209,6 +1228,42 @@ async function cmdRun(args: string[]): Promise<void> {
   runAction(path, action);
 }
 
+function cmdRename(args: string[]): void {
+  if (args.length !== 2) {
+    fail('rename requires NAME|PATH and NEW_NAME');
+  }
+
+  const [target, newName] = args;
+  if (target === undefined || newName === undefined) {
+    fail('rename requires NAME|PATH and NEW_NAME');
+  }
+  validateWorktreeName(newName);
+
+  const path = resolveWorktree(target);
+  const root = baseRepoRoot(path);
+  if (repoRoot(path) === root) {
+    fail('cannot rename the main worktree');
+  }
+
+  const project = managedWorktreeProject(path);
+  if (project === undefined) {
+    fail(`not a managed worktree: ${path}`);
+  }
+
+  const destination = join(wtWorktreesDir, project, newName);
+  if (path === resolvePath(destination)) {
+    fail(`worktree is already named ${newName}`);
+  }
+  if (existsSync(destination)) {
+    fail(`target already exists: ${destination}`);
+  }
+
+  mkdirSync(dirname(destination), { recursive: true });
+  git(['worktree', 'move', path, destination], root);
+  console.log(`${pc.green('renamed')} ${worktreeName(path, project)} ${pc.dim('->')} ${newName}`);
+  console.log(`  ${muted(destination)}`);
+}
+
 async function cmdArchive(args: string[]): Promise<void> {
   let force = false;
   let target = '';
@@ -1326,6 +1381,10 @@ async function main(): Promise<void> {
     }
     case 'run': {
       await cmdRun(args);
+      break;
+    }
+    case 'rename': {
+      cmdRename(args);
       break;
     }
     case 'archive': {
