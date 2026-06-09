@@ -36,7 +36,7 @@ wt archive [--force] NAME|PATH
 
 `wt goto` changes directories when shell integration is loaded. Without it, the command prints the target path.
 
-`wt archive` always removes the worktree with `git worktree remove --force`; `--force` skips the confirmation prompt.
+`wt archive` moves the worktree to `~/.wt/archived`, prunes the Git worktree entry, and returns quickly even when the worktree contains large untracked directories. `--force` skips the confirmation prompt.
 
 ## Actions
 

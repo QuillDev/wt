@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
@@ -30,6 +31,7 @@ interface PromptOption {
 const home = process.env['HOME'] ?? '';
 const wtHome = process.env['WT_HOME'] ?? join(home, '.wt');
 const wtWorktreesDir = process.env['WT_WORKTREES_DIR'] ?? join(wtHome, 'worktrees');
+const wtArchivedDir = process.env['WT_ARCHIVED_DIR'] ?? join(wtHome, 'archived');
 const defaultInitCommand = 'bun install --frozen-lockfile && bun run migrate-ledgers';
 const defaultRunCommand = 'bun run start:dev-fastest';
 const darkPanel = '#282C34';
@@ -88,7 +90,7 @@ const helpRows: HelpRow[] = [
   {
     command: 'archive',
     args: '[--force] NAME|PATH',
-    description: 'Remove a managed worktree; --force skips confirmation',
+    description: 'Move a managed worktree to ~/.wt/archived; --force skips confirmation',
   },
 ];
 
@@ -130,6 +132,7 @@ function usage(): string {
     '',
     helpSection('Storage'),
     `  ${muted('worktrees')}  ${pink('~/.wt/worktrees')}/${muted('<project-name>/<worktree-name>')}`,
+    `  ${muted('archived')}   ${pink('~/.wt/archived')}/${muted('<project-name>/<worktree-name>-<timestamp>')}`,
     `  ${muted('actions')}    ${actionPath}`,
     '',
     helpSection('Examples'),
@@ -304,7 +307,7 @@ function walkManagedWorktrees(scope?: string): string[] {
 
     const entries = readdirSync(current, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
         stack.push(join(current, entry.name));
       }
     }
@@ -326,6 +329,32 @@ function worktreeBranch(path: string): string {
 
   const commit = git(['rev-parse', '--short', 'HEAD'], path, { allowFail: true });
   return commit === '' ? 'unknown' : commit;
+}
+
+function isPathInside(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function archiveTimestamp(): string {
+  return new Date().toISOString().slice(0, 19).replaceAll(':', '').replace('T', '-');
+}
+
+function archiveDestination(path: string): string {
+  const project = projectName(path);
+  const managedRoot = join(wtWorktreesDir, project);
+  const name = isPathInside(path, managedRoot)
+    ? worktreeName(path, project).replaceAll('/', '__')
+    : path
+        .split('/')
+        .filter((part) => part !== '')
+        .join('__');
+  const base = join(wtArchivedDir, project, `${name}-${archiveTimestamp()}`);
+  let destination = base;
+  for (let suffix = 2; existsSync(destination); suffix++) {
+    destination = `${base}-${suffix}`;
+  }
+  return destination;
 }
 
 function resolveWorktree(target?: string): string {
@@ -1197,6 +1226,10 @@ async function cmdArchive(args: string[]): Promise<void> {
 
   const path =
     target === '' ? await chooseWorktree('Archive which worktree?') : resolveWorktree(target);
+  const root = baseRepoRoot(path);
+  if (repoRoot(path) === root) {
+    fail('cannot archive the main worktree');
+  }
   if (!force) {
     const ok = await promptConfirm(`Archive ${worktreeName(path, projectName(path))}?`);
     if (!ok) {
@@ -1205,8 +1238,18 @@ async function cmdArchive(args: string[]): Promise<void> {
     }
   }
 
-  git(['worktree', 'remove', '--force', path], path, { inherit: true });
+  const destination = archiveDestination(path);
+  mkdirSync(dirname(destination), { recursive: true });
+  git(['worktree', 'unlock', path], root, { allowFail: true });
+  renameSync(path, destination);
+  try {
+    git(['worktree', 'prune', '--expire', 'now'], root);
+  } catch (error) {
+    renameSync(destination, path);
+    throw error;
+  }
   console.log(`${pc.green('archived')} ${path}`);
+  console.log(`  ${muted('moved to')} ${destination}`);
 }
 
 function completeWorktrees(): void {
