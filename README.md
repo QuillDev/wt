@@ -28,6 +28,7 @@ wt new [--base REF] [--no-fetch] [NAME]
 wt list [--all]
 wt goto [root|NAME|PATH]
 wt open [NAME|PATH]
+wt rename NEW_NAME
 wt rename NAME|PATH NEW_NAME
 wt run [NAME|PATH] [ACTION]
 wt archive [--force] NAME|PATH
@@ -37,7 +38,7 @@ wt archive [--force] NAME|PATH
 
 `wt goto` changes directories when shell integration is loaded. Without it, the command prints the target path.
 
-`wt rename` moves a managed worktree to `~/.wt/worktrees/<project>/<new-name>` and updates Git's worktree metadata. It does not rename the Git branch checked out in that worktree.
+`wt rename` moves a managed worktree to `~/.wt/worktrees/<project>/<new-name>` and updates Git's worktree metadata. Run `wt rename NEW_NAME` inside a managed worktree to rename the current one, or `wt rename NAME|PATH NEW_NAME` to rename another worktree. It does not rename the Git branch checked out in that worktree.
 
 `wt archive` moves the worktree to `~/.wt/archived`, prunes the Git worktree entry, and returns quickly even when the worktree contains large untracked directories. `--force` skips the confirmation prompt.
 

@@ -85,7 +85,8 @@ const helpRows: HelpRow[] = [
   { command: 'goto', args: '[root|NAME|PATH]', description: 'Print a directory for cd' },
   { command: 'shell-init', description: 'Print shell integration for goto' },
   { command: 'open', args: '[NAME|PATH]', description: 'Open a worktree in Cursor' },
-  { command: 'rename', args: 'NAME|PATH NEW_NAME', description: 'Rename a managed worktree' },
+  { command: 'rename', args: 'NEW_NAME', description: 'Rename the current managed worktree' },
+  { command: 'rename', args: 'NAME|PATH NEW_NAME', description: 'Rename another managed worktree' },
   { command: 'run', args: 'ACTION', description: 'Run an action in the current repo' },
   { command: 'run', args: 'NAME|PATH ACTION', description: 'Run an action in another worktree' },
   {
@@ -142,6 +143,7 @@ function usage(): string {
     `  ${muted('$')} eval ${muted('"$(wt shell-init)"')}`,
     `  ${muted('$')} wt ${pink('goto')} ${muted('root')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
+    `  ${muted('$')} wt ${pink('rename')} ${muted('purchase-order-entity')}`,
     `  ${muted('$')} wt ${pink('rename')} ${muted('nako-haru-7188 nako-tsubaki-2043')}`,
     `  ${muted('$')} wt ${pink('archive')} ${muted('nako-haru-7188')}`,
   ].join('\n');
@@ -1229,17 +1231,30 @@ async function cmdRun(args: string[]): Promise<void> {
 }
 
 function cmdRename(args: string[]): void {
-  if (args.length !== 2) {
-    fail('rename requires NAME|PATH and NEW_NAME');
+  if (args.length === 0 || args.length > 2) {
+    fail('rename requires NEW_NAME or NAME|PATH NEW_NAME');
   }
 
-  const [target, newName] = args;
-  if (target === undefined || newName === undefined) {
-    fail('rename requires NAME|PATH and NEW_NAME');
+  let path: string;
+  let newName: string;
+  if (args.length === 1) {
+    const [currentNewName] = args;
+    if (currentNewName === undefined) {
+      fail('rename requires NEW_NAME or NAME|PATH NEW_NAME');
+    }
+    requireGitRepo();
+    path = repoRoot();
+    newName = currentNewName;
+  } else {
+    const [target, targetNewName] = args;
+    if (target === undefined || targetNewName === undefined) {
+      fail('rename requires NEW_NAME or NAME|PATH NEW_NAME');
+    }
+    path = resolveWorktree(target);
+    newName = targetNewName;
   }
   validateWorktreeName(newName);
 
-  const path = resolveWorktree(target);
   const root = baseRepoRoot(path);
   if (repoRoot(path) === root) {
     fail('cannot rename the main worktree');
