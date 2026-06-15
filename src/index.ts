@@ -10,7 +10,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
 
 import { cancel, confirm, intro, isCancel, outro, select, spinner, text } from '@clack/prompts';
 import type { KeyEvent } from '@opentui/core';
@@ -1147,12 +1147,32 @@ function printGotoShellHint(): void {
   );
 }
 
+type SupportedShell = 'fish' | 'posix';
+
 function cmdShellInit(args: string[]): void {
-  if (args.length > 0) {
-    fail(`unknown option for shell-init: ${args[0]}`);
+  const shell = parseShellInitArgs(args);
+  const wtBin = shellQuote(shellInitExecutablePath());
+
+  if (shell === 'fish') {
+    console.log(`set -g _wt_bin ${fishQuote(shellInitExecutablePath())}
+function wt
+  if test (count $argv) -gt 0; and test "$argv[1]" = "goto"
+    set -l tmp (mktemp); or return
+    env WT_GOTO_OUTPUT="$tmp" "$_wt_bin" goto $argv[2..-1]; or begin
+      rm -f "$tmp"
+      return 1
+    end
+    set -l dir (cat "$tmp")
+    rm -f "$tmp"
+    test -n "$dir"; or return
+    cd "$dir"; or return
+  else
+    "$_wt_bin" $argv
+  end
+end`);
+    return;
   }
 
-  const wtBin = shellQuote(shellInitExecutablePath());
   console.log(`_wt_bin=${wtBin}
 wt() {
   if [ "$1" = "goto" ]; then
@@ -1174,8 +1194,46 @@ wt() {
 }`);
 }
 
+function parseShellInitArgs(args: string[]): SupportedShell {
+  if (args.length === 0) {
+    return currentShell();
+  }
+
+  if (args.length === 2 && args[0] === '--shell') {
+    return parseShell(args[1]);
+  }
+
+  if (args.length === 1 && args[0] !== undefined && args[0].startsWith('--shell=')) {
+    return parseShell(args[0].slice('--shell='.length));
+  }
+
+  return fail(`unknown option for shell-init: ${args[0]}`);
+}
+
+function currentShell(): SupportedShell {
+  const shell = process.env['SHELL'];
+  if (shell !== undefined && basename(shell) === 'fish') {
+    return 'fish';
+  }
+  return 'posix';
+}
+
+function parseShell(shell: string | undefined): SupportedShell {
+  if (shell === 'fish') {
+    return 'fish';
+  }
+  if (shell === 'posix' || shell === 'sh' || shell === 'bash' || shell === 'zsh') {
+    return 'posix';
+  }
+  return fail(`unsupported shell for shell-init: ${shell ?? ''}`);
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function fishQuote(value: string): string {
+  return `'${value.replaceAll('\\', String.raw`\\`).replaceAll("'", String.raw`\'`)}'`;
 }
 
 function shellInitExecutablePath(): string {

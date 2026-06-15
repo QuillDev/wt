@@ -10,9 +10,13 @@ brew trust QuillDev/wt
 brew install QuillDev/wt/wt
 ```
 
-Enable `wt goto` in zsh:
+Enable `wt goto` in your shell:
 
 ```sh
+# fish
+echo 'wt shell-init | source' >> ~/.config/fish/config.fish
+
+# zsh/bash
 echo 'eval "$(wt shell-init)"' >> ~/.zshrc
 eval "$(wt shell-init)"
 type wt
