@@ -78,7 +78,7 @@ const helpRows: HelpRow[] = [
   { command: 'init', description: 'Create local worktree action config' },
   {
     command: 'new',
-    args: '[--base REF] [--no-fetch] [NAME]',
+    args: '[--base REF] [--remote-branch BRANCH] [--no-fetch] [NAME]',
     description: 'Create a managed worktree',
   },
   { command: 'list', args: '[--all]', description: 'Show managed worktrees' },
@@ -140,6 +140,7 @@ function usage(): string {
     helpSection('Examples'),
     `  ${muted('$')} wt ${pink('init')}`,
     `  ${muted('$')} wt ${pink('new')} ${muted('--base origin/main')}`,
+    `  ${muted('$')} wt ${pink('new')} ${muted('--remote-branch feature/api feature/api-local')}`,
     `  ${muted('$')} eval ${muted('"$(wt shell-init)"')}`,
     `  ${muted('$')} wt ${pink('goto')} ${muted('root')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
@@ -281,6 +282,49 @@ function validateWorktreeName(name: string): void {
 
 function localBranchExists(name: string, cwd = process.cwd()): boolean {
   return refExists(`refs/heads/${name}`, cwd);
+}
+
+function remoteBranchRef(branch: string, cwd = process.cwd()): string {
+  if (branch.trim() === '') {
+    fail('--remote-branch requires a value');
+  }
+
+  const remotes = git(['remote'], cwd, { allowFail: true })
+    .split('\n')
+    .map((remote) => remote.trim())
+    .filter((remote) => remote !== '');
+
+  if (branch.includes('/')) {
+    const [maybeRemote, ...nameParts] = branch.split('/');
+    const name = nameParts.join('/');
+    if (
+      maybeRemote !== undefined &&
+      maybeRemote !== '' &&
+      name !== '' &&
+      remotes.includes(maybeRemote)
+    ) {
+      const ref = `${maybeRemote}/${name}`;
+      if (refExists(`refs/remotes/${ref}`, cwd)) {
+        return ref;
+      }
+      fail(`remote branch not found: ${branch}`);
+    }
+  }
+
+  const preferredRemotes = [
+    'origin',
+    'upstream',
+    ...remotes.filter((remote) => !['origin', 'upstream'].includes(remote)),
+  ];
+
+  for (const remote of preferredRemotes) {
+    const ref = `${remote}/${branch}`;
+    if (refExists(`refs/remotes/${ref}`, cwd)) {
+      return ref;
+    }
+  }
+
+  return fail(`remote branch not found: ${branch}`);
 }
 
 function generatedWorktreeName(project: string): string {
@@ -1038,6 +1082,7 @@ async function cmdInit(args: string[]): Promise<void> {
 function cmdNew(args: string[]): void {
   requireGitRepo();
   let base = '';
+  let remoteBranch = '';
   let doFetch = true;
   let name = '';
 
@@ -1047,6 +1092,10 @@ function cmdNew(args: string[]): void {
       base = args[++i] ?? fail('--base requires a value');
     } else if (arg.startsWith('--base=')) {
       base = arg.slice('--base='.length);
+    } else if (arg === '--remote-branch') {
+      remoteBranch = args[++i] ?? fail('--remote-branch requires a value');
+    } else if (arg.startsWith('--remote-branch=')) {
+      remoteBranch = arg.slice('--remote-branch='.length);
     } else if (arg === '--no-fetch') {
       doFetch = false;
     } else if (arg === '-h' || arg === '--help') {
@@ -1063,6 +1112,12 @@ function cmdNew(args: string[]): void {
 
   if (doFetch) {
     fetchRemotes();
+  }
+  if (remoteBranch !== '') {
+    if (base !== '') {
+      fail('pass only one of --base or --remote-branch');
+    }
+    base = remoteBranchRef(remoteBranch);
   }
   if (base === '') {
     base = defaultBaseRef();

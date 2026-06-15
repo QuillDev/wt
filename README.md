@@ -28,7 +28,7 @@ type wt
 
 ```sh
 wt init
-wt new [--base REF] [--no-fetch] [NAME]
+wt new [--base REF] [--remote-branch BRANCH] [--no-fetch] [NAME]
 wt list [--all]
 wt goto [root|NAME|PATH]
 wt open [NAME|PATH]
@@ -39,6 +39,8 @@ wt archive [--force] NAME|PATH
 ```
 
 `wt new` creates managed worktrees under `~/.wt/worktrees/<project>/<name>`. If `NAME` is omitted, it generates one like `wt/3f9a`.
+
+Use `--base REF` to create the new local branch from any Git ref, such as `origin/develop`. Use `--remote-branch BRANCH` when the base is a remote branch; `--remote-branch feature/api` resolves to `origin/feature/api`, and `--remote-branch upstream/feature/api` uses that explicit remote.
 
 `wt goto` changes directories when shell integration is loaded. Without it, the command prints the target path.
 
