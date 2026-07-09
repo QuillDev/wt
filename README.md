@@ -44,6 +44,8 @@ Use `--base REF` to create the new local branch from any Git ref, such as `origi
 
 `wt goto` changes directories when shell integration is loaded. Without it, the command prints the target path.
 
+With no argument, `wt open` opens the current worktree when run inside a managed worktree; otherwise, it prompts for a worktree.
+
 `wt rename` moves a managed worktree to `~/.wt/worktrees/<project>/<new-name>` and updates Git's worktree metadata. Run `wt rename NEW_NAME` inside a managed worktree to rename the current one, or `wt rename NAME|PATH NEW_NAME` to rename another worktree. It does not rename the Git branch checked out in that worktree.
 
 `wt archive` moves the worktree to `~/.wt/archived`, prunes the Git worktree entry, and returns quickly even when the worktree contains large untracked directories. `--force` skips the confirmation prompt.

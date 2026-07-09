@@ -1304,7 +1304,11 @@ async function cmdOpen(args: string[]): Promise<void> {
     fail('open accepts at most one NAME or PATH');
   }
   const path =
-    args[0] === undefined ? await chooseWorktree('Open which worktree?') : resolveWorktree(args[0]);
+    args[0] !== undefined
+      ? resolveWorktree(args[0])
+      : isGitRepo() && managedWorktreeProject(repoRoot()) !== undefined
+        ? repoRoot()
+        : await chooseWorktree('Open which worktree?');
 
   const cursor = Bun.which('cursor');
   if (cursor !== null && cursor !== undefined) {
