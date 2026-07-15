@@ -17,6 +17,18 @@ import type { KeyEvent } from '@opentui/core';
 import pc from 'picocolors';
 
 type ActionConfig = Record<string, { command?: string }>;
+type WireConfig = Record<string, { default?: string }>;
+
+interface ListeningPort {
+  pid: number;
+  url: string;
+  cwd: string;
+}
+
+interface WireSource extends ListeningPort {
+  worktree: string;
+}
+
 interface InitCommands {
   initCommand: string;
   runCommand: string;
@@ -85,6 +97,12 @@ const helpRows: HelpRow[] = [
   { command: 'goto', args: '[root|NAME|PATH]', description: 'Print a directory for cd' },
   { command: 'shell-init', description: 'Print shell integration for goto' },
   { command: 'open', args: '[NAME|PATH]', description: 'Open a worktree in Cursor' },
+  { command: 'ports', args: '[NAME|PATH]', description: 'Show addresses exposed by a worktree' },
+  {
+    command: 'wire',
+    args: '[VARIABLE] [ADDRESS]',
+    description: 'Point a configured environment variable at a worktree address',
+  },
   { command: 'rename', args: 'NEW_NAME', description: 'Rename the current managed worktree' },
   { command: 'rename', args: 'NAME|PATH NEW_NAME', description: 'Rename another managed worktree' },
   { command: 'run', args: 'ACTION', description: 'Run an action in the current repo' },
@@ -144,6 +162,8 @@ function usage(): string {
     `  ${muted('$')} eval ${muted('"$(wt shell-init)"')}`,
     `  ${muted('$')} wt ${pink('goto')} ${muted('root')}`,
     `  ${muted('$')} wt ${pink('run')} ${muted('nako-haru-7188 dev')}`,
+    `  ${muted('$')} wt ${pink('ports')} ${muted('nako-haru-7188')}`,
+    `  ${muted('$')} wt ${pink('wire')} ${muted('API_URL')}`,
     `  ${muted('$')} wt ${pink('rename')} ${muted('purchase-order-entity')}`,
     `  ${muted('$')} wt ${pink('rename')} ${muted('nako-haru-7188 nako-tsubaki-2043')}`,
     `  ${muted('$')} wt ${pink('archive')} ${muted('nako-haru-7188')}`,
@@ -465,11 +485,13 @@ function readActions(path: string): ActionConfig {
   if (!existsSync(file)) {
     return {};
   }
-  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
-  if (isActionConfig(parsed)) {
-    return parsed;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return fail(`invalid JSON in ${file}`);
   }
-  return fail(`invalid actions.json at ${file}`);
+  return isActionConfig(parsed) ? parsed : fail(`invalid actions.json at ${file}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -489,6 +511,42 @@ function isActionConfig(value: unknown): value is ActionConfig {
     const { command } = entry;
     return command === undefined || typeof command === 'string';
   });
+}
+
+function wiresFileForPath(path: string): string {
+  return join(baseRepoRoot(path), '.wt', 'wires.json');
+}
+
+function isWireConfig(value: unknown): value is WireConfig {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.entries(value).every(([name, entry]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name) || !isRecord(entry)) {
+      return false;
+    }
+    const keys = Object.keys(entry);
+    return (
+      keys.every((key) => key === 'default') &&
+      (entry['default'] === undefined || typeof entry['default'] === 'string')
+    );
+  });
+}
+
+function readWires(path: string): WireConfig {
+  const file = wiresFileForPath(path);
+  if (!existsSync(file)) {
+    fail(`no wires.json found at ${file}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return fail(`invalid JSON in ${file}`);
+  }
+  return isWireConfig(parsed) ? parsed : fail(`invalid wires.json at ${file}`);
 }
 
 function actionNames(path: string): string[] {
@@ -1170,6 +1228,172 @@ function cmdList(args: string[]): void {
   }
 }
 
+function processCwd(pid: number, lsof: string): string | undefined {
+  if (process.platform === 'linux') {
+    try {
+      return realpathSync(`/proc/${pid}/cwd`);
+    } catch {
+      // Fall through to lsof when procfs is unavailable or restricted.
+    }
+  }
+
+  const output = runBin(lsof, ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
+    allowFail: true,
+  });
+  return output
+    .split('\n')
+    .find((line) => line.startsWith('n'))
+    ?.slice(1);
+}
+
+function discoverListeningPorts(): ListeningPort[] {
+  const portless = Bun.which('portless');
+  if (portless === null || portless === undefined) {
+    fail('port discovery requires portless');
+  }
+  const lsof = Bun.which('lsof');
+  if (lsof === null || lsof === undefined) {
+    fail('port discovery requires lsof');
+  }
+
+  const output = runBin(portless, ['list']);
+  const ports: ListeningPort[] = [];
+  for (const line of output.split('\n')) {
+    const match = /^\s*(?<url>https?:\/\/\S+)\s+->\s+\S+\s+\(pid\s+(?<pid>\d+)\)\s*$/u.exec(line);
+    if (match === null) {
+      continue;
+    }
+    const url = match.groups?.['url'];
+    const pidText = match.groups?.['pid'];
+    if (url === undefined || pidText === undefined) {
+      continue;
+    }
+    const pid = Number(pidText);
+    const cwd = processCwd(pid, lsof);
+    if (Number.isInteger(pid) && cwd !== undefined) {
+      ports.push({ pid, url, cwd });
+    }
+  }
+
+  return ports.toSorted((left, right) => left.url.localeCompare(right.url));
+}
+
+function portsForPath(path: string, ports = discoverListeningPorts()): ListeningPort[] {
+  return ports.filter((port) => isSameOrInsideExistingPath(port.cwd, path));
+}
+
+async function cmdPorts(args: string[]): Promise<void> {
+  if (args.length > 1) {
+    fail('ports accepts at most one NAME or PATH');
+  }
+
+  let path: string;
+  if (args[0] !== undefined) {
+    path = resolveWorktree(args[0]);
+  } else if (isGitRepo()) {
+    path = repoRoot();
+  } else {
+    path = await chooseWorktree('Show ports for which worktree?', false);
+  }
+
+  const ports = portsForPath(path);
+  console.log(helpSection(`Ports · ${projectName(path)} · ${worktreeBranch(path)}`));
+  if (ports.length === 0) {
+    console.log(`  ${muted('No active Portless addresses found for this worktree.')}`);
+    return;
+  }
+  for (const port of ports) {
+    console.log(`  ${pink('◆')} ${bold(port.url)} ${muted(`pid ${port.pid}`)}`);
+  }
+}
+
+function allWireSources(): WireSource[] {
+  const ports = discoverListeningPorts();
+  const sources: WireSource[] = [];
+  for (const path of walkManagedWorktrees()) {
+    const worktree = relative(wtWorktreesDir, path);
+    for (const port of portsForPath(path, ports)) {
+      sources.push({ ...port, worktree });
+    }
+  }
+  return sources;
+}
+
+function writeWireAssignment(variable: string, value: string): void {
+  const shell = process.env['WT_WIRE_SHELL'] === 'fish' ? 'fish' : 'posix';
+  const assignment =
+    shell === 'fish'
+      ? `set -gx ${variable} ${fishQuote(value)}\n`
+      : `export ${variable}=${shellQuote(value)}\n`;
+  const outputFile = process.env['WT_WIRE_OUTPUT'];
+  if (outputFile !== undefined && outputFile !== '') {
+    writeFileSync(outputFile, assignment);
+    return;
+  }
+  process.stdout.write(assignment);
+  if (process.stdout.isTTY && process.stderr.isTTY) {
+    console.error(
+      `${muted('tip')} load ${pink('wt shell-init')} to export the selected value in your current shell`,
+    );
+  }
+}
+
+async function cmdWire(args: string[]): Promise<void> {
+  if (args.length > 2) {
+    fail('wire accepts at most VARIABLE and ADDRESS');
+  }
+  requireGitRepo();
+  const path = repoRoot();
+  const wires = readWires(path);
+  const names = Object.keys(wires).toSorted((left, right) => left.localeCompare(right));
+  if (names.length === 0) {
+    fail(`no wireable environment variables configured in ${wiresFileForPath(path)}`);
+  }
+
+  const [requestedVariable, requestedValue] = args;
+  const variable =
+    requestedVariable ??
+    (await promptSelect(
+      'Wire which environment variable?',
+      names.map((name) => {
+        const current = process.env[name] ?? wires[name]?.default;
+        return current === undefined
+          ? { value: name, label: name }
+          : { value: name, label: name, hint: `current: ${current}` };
+      }),
+    ));
+  if (wires[variable] === undefined) {
+    fail(`environment variable is not configured in wires.json: ${variable}`);
+  }
+
+  let value = requestedValue;
+  if (value === undefined) {
+    const loading = spinner();
+    loading.start('Finding Portless addresses');
+    const sources = allWireSources();
+    loading.stop(
+      sources.length === 1
+        ? 'Found 1 Portless address'
+        : `Found ${sources.length} Portless addresses`,
+    );
+    const options: PromptOption[] = sources.map((source) => ({
+      value: source.url,
+      label: source.url,
+      hint: source.worktree,
+    }));
+    const fallback = wires[variable]?.default;
+    if (fallback !== undefined) {
+      options.unshift({ value: fallback, label: fallback, hint: 'configured default' });
+    }
+    if (options.length === 0) {
+      fail('no active Portless addresses or configured default found');
+    }
+    value = await promptSelect(`Choose a value for ${variable}`, options);
+  }
+
+  writeWireAssignment(variable, value);
+}
+
 async function cmdGoto(args: string[]): Promise<void> {
   if (args.length > 1) {
     fail('goto accepts at most one NAME or PATH');
@@ -1206,10 +1430,11 @@ type SupportedShell = 'fish' | 'posix';
 
 function cmdShellInit(args: string[]): void {
   const shell = parseShellInitArgs(args);
-  const wtBin = shellQuote(shellInitExecutablePath());
+  const executablePath = shellInitExecutablePath();
+  const wtBin = shellQuote(executablePath);
 
   if (shell === 'fish') {
-    console.log(`set -g _wt_bin ${fishQuote(shellInitExecutablePath())}
+    console.log(`set -g _wt_bin ${fishQuote(executablePath)}
 function wt
   if test (count $argv) -gt 0; and test "$argv[1]" = "goto"
     set -l tmp (mktemp); or return
@@ -1221,6 +1446,16 @@ function wt
     rm -f "$tmp"
     test -n "$dir"; or return
     cd "$dir"; or return
+  else if test (count $argv) -gt 0; and test "$argv[1]" = "wire"
+    set -l tmp (mktemp); or return
+    env WT_WIRE_OUTPUT="$tmp" WT_WIRE_SHELL=fish "$_wt_bin" wire $argv[2..-1]; or begin
+      rm -f "$tmp"
+      return 1
+    end
+    source "$tmp"
+    set -l status_code $status
+    rm -f "$tmp"
+    return $status_code
   else
     "$_wt_bin" $argv
   end
@@ -1243,6 +1478,18 @@ wt() {
     rm -f "$tmp"
     [ -n "$dir" ] || return
     cd "$dir" || return
+  elif [ "$1" = "wire" ]; then
+    shift
+    local tmp
+    tmp="$(mktemp)" || return
+    env WT_WIRE_OUTPUT="$tmp" WT_WIRE_SHELL=posix "$_wt_bin" wire "$@" || {
+      rm -f "$tmp"
+      return
+    }
+    . "$tmp"
+    local status_code=$?
+    rm -f "$tmp"
+    return $status_code
   else
     "$_wt_bin" "$@"
   fi
@@ -1303,12 +1550,14 @@ async function cmdOpen(args: string[]): Promise<void> {
   if (args.length > 1) {
     fail('open accepts at most one NAME or PATH');
   }
-  const path =
-    args[0] !== undefined
-      ? resolveWorktree(args[0])
-      : isGitRepo() && managedWorktreeProject(repoRoot()) !== undefined
-        ? repoRoot()
-        : await chooseWorktree('Open which worktree?');
+  let path: string;
+  if (args[0] !== undefined) {
+    path = resolveWorktree(args[0]);
+  } else if (isGitRepo() && managedWorktreeProject(repoRoot()) !== undefined) {
+    path = repoRoot();
+  } else {
+    path = await chooseWorktree('Open which worktree?');
+  }
 
   const cursor = Bun.which('cursor');
   if (cursor !== null && cursor !== undefined) {
@@ -1501,6 +1750,14 @@ async function main(): Promise<void> {
     }
     case 'open': {
       await cmdOpen(args);
+      break;
+    }
+    case 'ports': {
+      await cmdPorts(args);
+      break;
+    }
+    case 'wire': {
+      await cmdWire(args);
       break;
     }
     case 'goto': {
